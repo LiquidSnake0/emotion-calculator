@@ -2277,6 +2277,46 @@ restent dans `variantes/` pour son oreille. 224 tests, fumée 32 ok.
 Reste de l'étape 3, pas fait : le morse du piano jugé à l'oreille, avec le protocole
 corrigé.
 
+### Le relais complet : le cue apprend, le master ne fait que suivre — les deux disques
+
+Sa vision, le 15 septembre : « l'analyse du cue et l'analyse du master, c'est deux choses
+qui s'exécutent en parallèle. L'un fixe les règles, l'autre analyse en temps réel avec déjà
+toutes les informations. Si j'enlève les basses de A, le master saura que les basses de A ne
+sont pas là ; le tchak côté A et la basse côté B tournent en même temps, l'image suit le
+fade. » Décision : **huit cases partagées**, quatre par disque au plus, un reste partagé.
+
+| pièce | ce qu'elle fait |
+|---|---|
+| `RoleAnalyseur` (Solo · Cue · Master), `SpectrumAnalyzer.Role` | en Master, `SourceSeparator.SuiviSeul` : aucun portrait ne se forme, `Memoriser` range et sort. Sans cue configuré, Solo = comme avant. |
+| `SourceSeparator.Empreinte` / `Portrait()` | gabarits dans l'ordre des rangs, positions, hauteurs, centres, stabilité, vues, accordage, fiche |
+| `AdopterPortrait`, `AccueillirPortrait`, `RetirerDisque`, `Compacter` → `Relais(AncienRang, RangEntrant, Actives)` | le suivi joint : les gabarits de B s'ajoutent à ceux de A (`_disque` par ligne, `DisqueOrdonne`, `EnFondu`) ; A est réduit aux plus entendus si la place manque ; le retrait compacte et retague 1 → 0. Les positions de B sont décalées de (cents_B − cents_A)/50 cases ; les gabarits ne bougent pas, ils glissent. |
+| `SpectrumAnalyzer.EmpreinteDisque`, `Empreinte()`, `Accueillir()`, `Retirer()`, `Deplacer()` | l'état par rang suit le relais : `MotifSources`, `SourceEnvelope`, `ContourRange` ont `Exporter/Importer/Vider/Reorganiser` ; les crêtes aussi. Le reste garde le sien pendant le fondu et prend celui du disque entrant au retrait. |
+| `DualAudioSource` | accueil à 0,15 de fondu, tempo à 0,5, retrait à 0,9 (+ `NewTrack()` du cue), `Phase` pour le journal ; les rôles sont posés dans le constructeur |
+| paquet | `Sources = 8`, `SourceCount = 8` ; drapeau bits 4–5 = disque (`SourceDisqueShift`) ; octet 121 = pitch signé en quarts de % ; motifs 6–7 à 122/124, caractères 3 à 126, degrés 3 à 127 ; octet 255 = bit 0 verrou sonorités, bit 1 verrou rythme |
+| `MotifSources.VerrouRythme` (4 mesures), `SpectrumAnalyzer.RythmeSu` | le verrou à deux vitesses : le rythme resserre `TempoTracker.Preferer` autour du BPM mesuré |
+| `fenetre.py` | huit cases (4 × 2), étiquette A / B / A+B dans le titre pendant un fondu, lit les nouveaux octets |
+| sonde `relaisA= relaisB= fondu=t0,t1`, `outils/relais.py` | la mesure : cue A, cue B, master sur le mélange ; juge = stems Demucs des deux disques pesés par le fader, par tranche (A seul / fondu / B seul) |
+
+**Mesuré sur deux couples** (WordBank → Echoes, Dead Internet → Glyph) : pendant le fondu,
+**9 cases sur 9** ont pour stem le plus proche un stem de leur disque ; la somme des cases
+de A suit le fader de A à 0,71 / 0,76, celle de B le fader de B à 0,55 / 0,85 ; la
+corrélation avec l'autre disque est négative (médiane −0,43 / −0,17). Sur les instruments
+fabriqués (`RelaisTests`), un master qui adopte suit comme le cue à > 0,9, et les cases de A
+tombent à un tiers pendant que celles de B triplent — à la fuite près, mesurée ailleurs à
+0,4 sur du vrai son : c'est pour cela que le test n'exige pas zéro.
+
+**Pièges traversés.** `Sources` passé de 6 à 8 a cassé un test du paquet qui donnait une
+forme `6 − i` (0 pour la case 6, remplacé par la forme par défaut) ; la stabilité des motifs
+demande quatre mesures (deux paires, deux impaires), donc le verrou rythme est à quatre et
+non trois ; un `record Empreinte` et une méthode `Empreinte()` ne cohabitent pas ; `Pitch`
+existait déjà dans le paquet (la classe de hauteur) → `PitchRelais` ; en zsh, une variable
+non citée ne se découpe pas en arguments.
+
+**Pas fait** : la variance sur un vrai fader (pitch et EQ) n'est pas mesurée ; le reste
+partagé ne distingue pas les deux batteries (le motif de chaque reste, transmis, le pourrait
+côté rendu) ; en Master sans cue passé, aucune source n'est publiée tant qu'aucun portrait
+n'est arrivé — c'est voulu.
+
 ## Le contrôle de fumée, et pourquoi il a fallu l'écrire
 
 ```sh

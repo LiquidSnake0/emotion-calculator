@@ -185,6 +185,89 @@ public sealed class MotifSources
         return tenues >= 2;
     }
 
+    /// <summary>
+    /// LE VERROU A DEUX VITESSES : le rythme se sait bien avant les sonorites. « Apres deux
+    /// ou trois boom-tchak on a deja l'info sur le BPM, et le boom-tchak ne va pas changer. »
+    /// Le motif du reste tient-il depuis <paramref name="mesures"/> mesures ?
+    /// </summary>
+    public bool VerrouRythme(int rangReste, int mesures = MesuresRythme) =>
+        (uint)rangReste < (uint)_sources && _mesuresVues[rangReste] >= mesures && _stabilite[rangReste] >= StabiliteSure;
+
+    /// <summary>
+    /// Mesures de motif tenu avant de dire que le rythme est su. Quatre : la stabilite se
+    /// lit entre les mesures paires et les impaires, il en faut deux de chaque pour qu'elle
+    /// veuille dire quelque chose — une dizaine de secondes a 90 BPM, contre cinquante pour
+    /// le verrou des sonorites.
+    /// </summary>
+    public const int MesuresRythme = 4;
+
+    /// <summary>Le motif moyen d'un rang tel quel, sa stabilite et ses mesures vues, pour l'empreinte.</summary>
+    public (float[] Motif, float Stabilite, int Vues) Exporter(int rang)
+    {
+        var m = new float[Cases];
+        if ((uint)rang < (uint)_sources) _motif.AsSpan(rang * Cases, Cases).CopyTo(m);
+        return (m, Stabilite(rang), MesuresVues(rang));
+    }
+
+    /// <summary>
+    /// Pose un motif appris ailleurs sur un rang : l'historique est rempli de ce motif sur
+    /// autant de mesures qu'il a ete vu, pour que la stabilite et le masque se relisent
+    /// exactement comme au cue.
+    /// </summary>
+    public void Importer(int rang, ReadOnlySpan<float> motif, float stabilite, int vues)
+    {
+        if ((uint)rang >= (uint)_sources) return;
+        Vider(rang);
+        var n = Math.Min(Mesures, Math.Max(0, vues));
+        var h = _historique[rang];
+        for (var m = 0; m < n; m++) motif.Slice(0, Cases).CopyTo(h.AsSpan(m * Cases, Cases));
+        motif.Slice(0, Cases).CopyTo(_motif.AsSpan(rang * Cases, Cases));
+        _mesuresVues[rang] = vues;
+        _stabilite[rang] = stabilite;
+    }
+
+    public void Vider(int rang)
+    {
+        if ((uint)rang >= (uint)_sources) return;
+        Array.Clear(_historique[rang]);
+        Array.Clear(_mesureCourante, rang * Cases, Cases);
+        Array.Clear(_comptes, rang * Cases, Cases);
+        _mesuresVues[rang] = 0; _derniereCase[rang] = -1; _precedent[rang] = 0f;
+        Array.Clear(_motif, rang * Cases, Cases);
+        _stabilite[rang] = 0f;
+    }
+
+    /// <summary>
+    /// Deplace l'etat de chaque rang selon le relais : <paramref name="ancienRang"/>[r] dit
+    /// d'ou vient le nouveau rang r, ou -1 s'il part vide.
+    /// </summary>
+    public void Reorganiser(ReadOnlySpan<int> ancienRang)
+    {
+        var copie = new MotifSources(_sources);
+        for (var r = 0; r < _sources; r++)
+        {
+            var a = r < ancienRang.Length ? ancienRang[r] : -1;
+            if (a < 0 || a >= _sources) continue;
+            Array.Copy(_historique[a], copie._historique[r], Mesures * Cases);
+            Array.Copy(_mesureCourante, a * Cases, copie._mesureCourante, r * Cases, Cases);
+            Array.Copy(_comptes, a * Cases, copie._comptes, r * Cases, Cases);
+            copie._mesuresVues[r] = _mesuresVues[a]; copie._derniereCase[r] = _derniereCase[a];
+            copie._precedent[r] = _precedent[a];
+            Array.Copy(_motif, a * Cases, copie._motif, r * Cases, Cases);
+            copie._stabilite[r] = _stabilite[a];
+        }
+        for (var r = 0; r < _sources; r++)
+        {
+            Array.Copy(copie._historique[r], _historique[r], Mesures * Cases);
+            Array.Copy(copie._mesureCourante, r * Cases, _mesureCourante, r * Cases, Cases);
+            Array.Copy(copie._comptes, r * Cases, _comptes, r * Cases, Cases);
+            _mesuresVues[r] = copie._mesuresVues[r]; _derniereCase[r] = copie._derniereCase[r];
+            _precedent[r] = copie._precedent[r];
+            Array.Copy(copie._motif, r * Cases, _motif, r * Cases, Cases);
+            _stabilite[r] = copie._stabilite[r];
+        }
+    }
+
     public void Reset()
     {
         foreach (var h in _historique) Array.Clear(h);

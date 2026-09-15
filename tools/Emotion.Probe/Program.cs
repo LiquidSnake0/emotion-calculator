@@ -65,6 +65,49 @@ foreach (var a in args)
             System.Globalization.CultureInfo.InvariantCulture, out var cp)) centrePref = cp;
 var analyzer = new SpectrumAnalyzer(rate, separate, memoireT, inertieT, centrePref, largeurPref);
 
+// LE RELAIS, HORS LIGNE : « relaisA=<A.wav> relaisB=<B.wav> fondu=<t0>,<t1> ».
+//
+// Le fichier analyse est alors un MELANGE : A seul, puis un fondu de A vers B entre t0 et
+// t1, puis B seul. Deux analyseurs de cue apprennent A et B chacun sur leur propre fichier
+// (les soixante premieres secondes, apprentissage dans le fil), et l'analyseur principal
+// devient le master : il ne forme aucun portrait, il recoit celui de A avant la premiere
+// image, accueille celui de B a t0 et retire A a t1 — exactement ce que DualAudioSource
+// fait au rythme du fader. C'est la mesure du relais : sur chaque image, ce que chaque
+// case publie et a quel disque elle dit appartenir, a confronter aux stems de A et de B.
+var relaisA = args.FirstOrDefault(a => a.StartsWith("relaisA="))?[8..];
+var relaisB = args.FirstOrDefault(a => a.StartsWith("relaisB="))?[8..];
+double fonduT0 = -1, fonduT1 = -1;
+if (args.FirstOrDefault(a => a.StartsWith("fondu="))?[6..] is { } fonduArg)
+{
+    var parts = fonduArg.Split(',');
+    fonduT0 = double.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+    fonduT1 = double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+}
+SpectrumAnalyzer.EmpreinteDisque? empreinteB = null;
+var relaisFait = 0;   // 0 rien, 1 B accueilli, 2 A retire
+if (relaisA is not null && relaisB is not null)
+{
+    SpectrumAnalyzer.EmpreinteDisque Apprendre(string fichier)
+    {
+        var (son, tx) = Wav.ReadMono(fichier, 0, 60);
+        var cue = new SpectrumAnalyzer(tx, separate, memoireT, inertieT, centrePref, largeurPref) { Role = RoleAnalyseur.Cue };
+        cue.Separation.ApprentissageEnLigne = true;
+        for (var i = 0; i + SpectrumAnalyzer.Window <= son.Length; i += SpectrumAnalyzer.Window)
+            cue.Analyze(son.AsSpan(i, SpectrumAnalyzer.Window), (long)(i * 1000L / tx));
+        var e = cue.Empreinte();
+        Console.WriteLine($"cue {Path.GetFileName(fichier)} : {e.Sources.Actives} gabarits + reste, " +
+                          $"accordage {e.Sources.AccordageCents:+0;-0} cents, tempo {e.Bpm:F1}, " +
+                          $"motifs {string.Join(" ", e.StabiliteMotifs.Select(s => s.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))}");
+        return e;
+    }
+    var empreinteA = Apprendre(relaisA);
+    empreinteB = Apprendre(relaisB);
+    analyzer.Role = RoleAnalyseur.Master;
+    analyzer.Accueillir(empreinteA);
+    analyzer.Retirer();
+    Console.WriteLine($"master : suit A ({analyzer.Separation.Actives} gabarits), accueil de B a {fonduT0:F0} s, retrait de A a {fonduT1:F0} s");
+}
+
 // LES DEUX REGIMES, DANS LE MEME PROCESSUS.
 //
 // Un ecart tenace separait la sonde du direct : sur le meme fichier, la sonde trouve 87 BPM
@@ -313,6 +356,15 @@ for (var i = 0; i + hop <= mono.Length; i += hop)
     // L'horodatage : l'horloge murale plutot que le compte d'echantillons.
     if (horlogeMurale) tMs = (long)(DateTime.UtcNow - departReel).TotalMilliseconds;
 
+    // Le relais hors ligne, au rythme du fondu declare.
+    if (empreinteB is not null)
+    {
+        if (relaisFait == 0 && tMs >= fonduT0 * 1000) { analyzer.Accueillir(empreinteB); relaisFait = 1;
+            Console.WriteLine($"   t={tMs / 1000.0,6:F1} s  accueil de B : {analyzer.Separation.Actives} gabarits suivis, reste partage"); }
+        if (relaisFait == 1 && tMs >= fonduT1 * 1000) { analyzer.Retirer(); relaisFait = 2;
+            Console.WriteLine($"   t={tMs / 1000.0,6:F1} s  retrait de A : {analyzer.Separation.Actives} gabarits suivis"); }
+    }
+
     chronoImage.Restart();
     var f = analyzer.Analyze(mono.AsSpan(i, hop), tMs);
     coutImage.Add(chronoImage.Elapsed.TotalMilliseconds);
@@ -339,10 +391,13 @@ for (var i = 0; i + hop <= mono.Length; i += hop)
         for (var r = 0; r < f.Voices.Actives; r++)
         {
             var l = f.Voices.LaneAt(r);
+            // Cinq colonnes par case : niveau, frappe, pique, tenue, et LE DISQUE (0 celui
+            // qui joue, 1 celui qui entre, 2 le reste partage) — c'est ce que le relais publie.
             ligne.Append('\t').Append(l.Level.ToString("F3", System.Globalization.CultureInfo.InvariantCulture))
                  .Append('\t').Append(l.Hit ? '1' : '0')
                  .Append('\t').Append(l.Pique.ToString("F3", System.Globalization.CultureInfo.InvariantCulture))
-                 .Append('\t').Append(l.Tenue.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
+                 .Append('\t').Append(l.Tenue.ToString("F3", System.Globalization.CultureInfo.InvariantCulture))
+                 .Append('\t').Append(l.Disque);
         }
         journalSources.WriteLine(ligne.ToString());
     }

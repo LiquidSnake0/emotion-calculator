@@ -321,6 +321,50 @@ public sealed class SourceEnvelope
         return c > 1e-3f ? Math.Clamp(_moyenne[rang] / c, 0f, 1f) : 0f;
     }
 
+    /// <summary>Le caractere d'un rang et s'il est connu, pour l'empreinte.</summary>
+    public (float Caractere, bool Connu) Exporter(int rang) =>
+        (uint)rang < (uint)_caractere.Length ? (_caractere[rang], _caractereConnu[rang]) : (0.5f, false);
+
+    /// <summary>Pose un caractere appris ailleurs. Le reste de la mesure repart de zero : c'est un autre signal.</summary>
+    public void Importer(int rang, float caractere, bool connu)
+    {
+        if ((uint)rang >= (uint)_caractere.Length) return;
+        Vider(rang);
+        _caractere[rang] = caractere;
+        _caractereConnu[rang] = connu;
+    }
+
+    public void Vider(int rang)
+    {
+        if ((uint)rang >= (uint)_caractere.Length) return;
+        _crete[rang] = _moyenne[rang] = _precedent[rang] = _pique[rang] = _muet[rang] = 0f;
+        _frappe[rang] = false; _depuisFrappe[rang] = 0;
+        _caractere[rang] = 0f; _caractereConnu[rang] = false;
+        _creteGardee[rang] = _moyenneGardee[rang] = _piqueGarde[rang] = 0f; _restaure[rang] = false;
+    }
+
+    /// <summary>Deplace l'etat de chaque rang selon le relais (voir <see cref="MotifSources.Reorganiser"/>).</summary>
+    public void Reorganiser(ReadOnlySpan<int> ancienRang)
+    {
+        var n = _caractere.Length;
+        var copie = new SourceEnvelope(n, _frameS) { _tempsMs = _tempsMs };
+        for (var r = 0; r < n; r++)
+        {
+            var a = r < ancienRang.Length ? ancienRang[r] : -1;
+            if (a < 0 || a >= n) continue;
+            copie._crete[r] = _crete[a]; copie._moyenne[r] = _moyenne[a]; copie._precedent[r] = _precedent[a];
+            copie._pique[r] = _pique[a]; copie._muet[r] = _muet[a]; copie._frappe[r] = _frappe[a];
+            copie._depuisFrappe[r] = _depuisFrappe[a]; copie._caractere[r] = _caractere[a];
+            copie._caractereConnu[r] = _caractereConnu[a]; copie._creteGardee[r] = _creteGardee[a];
+            copie._moyenneGardee[r] = _moyenneGardee[a]; copie._piqueGarde[r] = _piqueGarde[a]; copie._restaure[r] = _restaure[a];
+        }
+        Array.Copy(copie._crete, _crete, n); Array.Copy(copie._moyenne, _moyenne, n); Array.Copy(copie._precedent, _precedent, n);
+        Array.Copy(copie._pique, _pique, n); Array.Copy(copie._muet, _muet, n); Array.Copy(copie._frappe, _frappe, n);
+        Array.Copy(copie._depuisFrappe, _depuisFrappe, n); Array.Copy(copie._caractere, _caractere, n);
+        Array.Copy(copie._caractereConnu, _caractereConnu, n); Array.Copy(copie._creteGardee, _creteGardee, n);
+        Array.Copy(copie._moyenneGardee, _moyenneGardee, n); Array.Copy(copie._piqueGarde, _piqueGarde, n); Array.Copy(copie._restaure, _restaure, n);
+    }
+
     /// <summary>Oublie tout : changement de disque.</summary>
     public void Reset()
     {

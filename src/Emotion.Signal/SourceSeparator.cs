@@ -31,8 +31,54 @@ public sealed class SourceSeparator
     /// <summary>
     /// Capacite : combien de sources le paquet peut porter. Le nombre publie, lui, est
     /// decouvert par disque (<see cref="Actives"/>).
+    ///
+    /// HUIT, PARTAGEES ENTRE DEUX DISQUES PENDANT LE FONDU. Le master ne suit pas « la
+    /// track », il suit les deux : les gabarits du disque qui sort et ceux du disque qui
+    /// entre, cote a cote dans le meme suivi. « Si j'enleve les basses de A, le master saura
+    /// que les basses de A ne sont pas la ; on aura le tchak cote A et la basse cote B qui
+    /// tournent en meme temps. » Un disque seul n'en apprend jamais plus de
+    /// <see cref="MaxAppris"/> ; en fondu, chacun garde au plus <see cref="ParDisqueEnFondu"/>,
+    /// et le reste — partage, puisqu'un residu ne se signe pas — prend la derniere case.
     /// </summary>
-    public const int Sources = 6;
+    public const int Sources = 8;
+
+    /// <summary>
+    /// Combien de gabarits un disque seul peut apprendre. Six : au-dela, la stabilite des
+    /// gabarits tombe (0,87–0,99 a six, 0,76–0,92 a douze) et la factorisation decoupe des
+    /// instruments en morceaux qui ne se retrouvent pas d'un apprentissage a l'autre.
+    /// </summary>
+    public const int MaxAppris = 6;
+
+    /// <summary>Combien de gabarits chaque disque garde pendant un fondu.</summary>
+    public const int ParDisqueEnFondu = 4;
+
+    /// <summary>
+    /// SUIVI SEUL : l'analyseur du master ne forme jamais de portrait. Il recoit ceux du cue
+    /// et se contente de suivre — c'est la regle « le cue apprend, le master joue », enfin
+    /// appliquee jusqu'au bout. Apprendre sur le master reviendrait a apprendre sur une somme
+    /// de deux disques, qui n'existe dans aucun des deux.
+    /// </summary>
+    public bool SuiviSeul { get; set; }
+
+    /// <summary>A quel disque appartient chaque gabarit : 0 celui qui joue, 1 celui qui entre.</summary>
+    private readonly int[] _disque = new int[Sources];
+
+    /// <summary>
+    /// Le disque de la source de rang donne : 0 le disque qui joue, 1 celui qui entre, 2 le
+    /// reste pendant un fondu — un residu porte les deux batteries et ne se signe pas.
+    /// </summary>
+    public int DisqueOrdonne(int rang)
+    {
+        if (rang >= 0 && rang < Actives) return _disque[_ordre[rang]];
+        if (rang == RangReste) return EnFondu ? 2 : 0;
+        return 0;
+    }
+
+    /// <summary>Deux portraits suivis a la fois : le fondu est en cours.</summary>
+    public bool EnFondu
+    {
+        get { for (var s = 0; s < Actives; s++) if (_disque[s] != 0) return true; return false; }
+    }
 
     /// <summary>
     /// Combien de temps la separation ecoute pour apprendre. QUARANTE SECONDES, ET C'EST
@@ -498,6 +544,10 @@ public sealed class SourceSeparator
         _ecrit = (_ecrit + 1) % _memoire;
         if (_remplies < _memoire) _remplies++;
 
+        // Le master ne forme aucun portrait : il ne fait que suivre ce que le cue lui a
+        // transmis. Sans cette garde, le provisoire partirait sur le melange des deux disques.
+        if (SuiviSeul) return;
+
         // D'ABORD UN PROVISOIRE, VITE ; PUIS LE VRAI, QUAND ON A ENTENDU ASSEZ.
         //
         // Les quarante secondes sont le prix d'un apprentissage qui distingue des
@@ -530,7 +580,7 @@ public sealed class SourceSeparator
             // laisser aux instruments qui entrent le temps d'avoir leur case.
             var lance = _choixFait
                 ? _apprentissage.TryStartCroissance(_v, _w, Actives, _memoire)
-                : _apprentissage.TryStartChoix(_v, 2, Sources, _memoire, IterationsBalayage);
+                : _apprentissage.TryStartChoix(_v, 2, MaxAppris, _memoire, IterationsBalayage);
             if (lance) _depuisApprentissage = 0;
         }
 
@@ -594,7 +644,185 @@ public sealed class SourceSeparator
         _reste = 0f;
         _hauteurReste = 0.5f;
         _vuesReste = 0;
+        Array.Clear(_disque);
         for (var i = 0; i < _w.Length; i++) _w[i] = 0.1f + (float)_alea.NextDouble() * 0.9f;
+    }
+
+    // ------------------------------------------------------------------ le relais
+
+    /// <summary>
+    /// L'EMPREINTE D'UN DISQUE : ce que le cue a appris et que le master recevra tel quel.
+    /// Les gabarits dans l'ordre des rangs (du grave a l'aigu), la position ou chacun a joue,
+    /// sa couleur, sa stabilite, combien on l'a entendu, et l'accordage de l'axe sur lequel
+    /// tout cela a ete mesure. Aucun niveau instantane : c'est un portrait, pas une image.
+    /// </summary>
+    public sealed record Empreinte(
+        int Actives, float[] Gabarits, float[] Positions, float[] Hauteurs, float[] Centres,
+        float[] Stabilite, int[] Vues, float AccordageCents, string? Camelot)
+    {
+        public static readonly Empreinte Vide = new(0, [], [], [], [], [], [], 0f, null);
+    }
+
+    /// <summary>Le portrait courant, dans l'ordre des rangs publies.</summary>
+    public Empreinte Portrait()
+    {
+        var k = Actives;
+        var e = new Empreinte(k, new float[k * Longueur], new float[k], new float[k], new float[k],
+                              new float[k], new int[k], AccordageCents, _camelot);
+        for (var r = 0; r < k; r++)
+        {
+            var s = _ordre[r];
+            _w.AsSpan(s * Longueur, Longueur).CopyTo(e.Gabarits.AsSpan(r * Longueur, Longueur));
+            e.Positions[r] = _positionsApprises[s];
+            e.Hauteurs[r] = _hauteurs[s];
+            e.Centres[r] = _centres[s];
+            e.Stabilite[r] = _stabilite[s];
+            e.Vues[r] = _vues[s];
+        }
+        return e;
+    }
+
+    /// <summary>
+    /// Ce que le relais a fait des rangs : pour chaque nouveau rang, l'ancien rang du disque
+    /// qui jouait (ou -1), et le rang dans l'empreinte entrante (ou -1). L'analyseur s'en
+    /// sert pour deplacer ce qu'il tient par rang — motifs, caractere, crete, etendue.
+    /// </summary>
+    public readonly record struct Relais(int[] AncienRang, int[] RangEntrant, int Actives);
+
+    /// <summary>
+    /// ADOPTE un portrait comme seul disque : le master qui ne suivait rien recoit le disque
+    /// du cue. Tout ce qui s'apprend est fige ; la projection prend l'accordage du disque.
+    /// </summary>
+    public Relais AdopterPortrait(Empreinte e, int disque = 0)
+    {
+        var k = Math.Min(e.Actives, Sources - 1);
+        ConstruireProjection(e.AccordageCents);
+        _accordageFait = true;
+        Array.Clear(_v); _remplies = _ecrit = 0;
+        Array.Clear(_hCourant); Array.Clear(_hKl); Array.Clear(_courant);
+        for (var s = 0; s < Sources; s++) { _ordre[s] = s; _disque[s] = 0; _vues[s] = 0; _stabilite[s] = 0f; }
+        for (var r = 0; r < k; r++) PoserGabarit(r, e, r, disque, 0f);
+        Actives = k;
+        _camelot = e.Camelot;
+        _provisoireFait = _choixFait = true;
+        Pret = k > 0;
+        Verrou = true;
+        _profilConnu = false;
+        _reste = 0f; _vuesReste = 0;
+        var rel = new Relais(new int[Sources], new int[Sources], k);
+        Array.Fill(rel.AncienRang, -1); Array.Fill(rel.RangEntrant, -1);
+        for (var r = 0; r < k; r++) rel.RangEntrant[r] = r;
+        return rel;
+    }
+
+    /// <summary>
+    /// ACCUEILLE le disque qui entre, a cote de celui qui joue. Chacun garde au plus
+    /// <see cref="ParDisqueEnFondu"/> gabarits — les plus entendus — et le suivi porte
+    /// desormais les deux jeux dans une seule passe : sur chaque image, ce qui est a A et
+    /// ce qui est a B. Les positions apprises de B sont ramenees sur l'axe courant : un
+    /// gabarit glisse, il ne depend pas de l'accordage ; seule la place ou il a joue en depend.
+    /// </summary>
+    public Relais AccueillirPortrait(Empreinte e)
+    {
+        // Rien ne jouait encore : le disque qui entre est adopte tel quel, mais marque
+        // « entrant », pour que la fin du fondu le retague comme les autres fois.
+        if (!Pret || Actives == 0) return AdopterPortrait(e, 1);
+        var kB = Math.Min(e.Actives, ParDisqueEnFondu);
+        var kA = Math.Min(Actives, Sources - 1 - kB);
+        // Les rangs de A a garder : les plus entendus, dans leur ordre.
+        var garder = new bool[Actives];
+        var rangsA = Enumerable.Range(0, Actives).OrderByDescending(r => _vues[_ordre[r]]).ThenBy(r => r).Take(kA);
+        foreach (var r in rangsA) garder[r] = true;
+        var rel = Compacter(garder);
+        // Les rangs de B a prendre : les plus entendus, dans leur ordre.
+        var rangsB = Enumerable.Range(0, e.Actives).OrderByDescending(r => e.Vues[r]).ThenBy(r => r).Take(kB).OrderBy(r => r).ToArray();
+        var decalage = (e.AccordageCents - AccordageCents) / (1200f / ProfileLearner.ParOctave);
+        var k = rel.Actives;
+        foreach (var rB in rangsB)
+        {
+            PoserGabarit(k, e, rB, 1, decalage);
+            rel.RangEntrant[k] = rB;
+            k++;
+        }
+        Actives = k;
+        Verrou = true;
+        _profilConnu = false;
+        return rel with { Actives = k };
+    }
+
+    /// <summary>
+    /// RETIRE un disque du suivi : le fondu est fini, celui qui sortait s'est tu. Les gabarits
+    /// de l'autre restent a leur place, et deviennent le disque qui joue.
+    /// </summary>
+    public Relais RetirerDisque(int disque)
+    {
+        var garder = new bool[Actives];
+        for (var r = 0; r < Actives; r++) garder[r] = _disque[_ordre[r]] != disque;
+        var rel = Compacter(garder);
+        for (var s = 0; s < Sources; s++) _disque[s] = 0;
+        Pret = Actives > 0;
+        return rel;
+    }
+
+    /// <summary>Copie le gabarit de rang <paramref name="rE"/> de l'empreinte dans la ligne <paramref name="s"/>.</summary>
+    private void PoserGabarit(int s, Empreinte e, int rE, int disque, float decalagePositions)
+    {
+        e.Gabarits.AsSpan(rE * Longueur, Longueur).CopyTo(_w.AsSpan(s * Longueur, Longueur));
+        _positionsApprises[s] = Math.Clamp(e.Positions[rE] + decalagePositions, 0f, Positions - 1);
+        _positionCourante[s] = _positionsApprises[s];
+        _centres[s] = e.Centres[rE];
+        _hauteurs[s] = EnOctavesHz(CaseEnHz(_centres[s] + _positionsApprises[s]));
+        _stabilite[s] = e.Stabilite[rE];
+        _vues[s] = e.Vues[rE];
+        _disque[s] = disque;
+        _classeCourante[s] = -1;
+        _dominance[s] = 0f;
+        Array.Clear(_hCourant, s * Positions, Positions);
+        Array.Clear(_hKl, s * Positions, Positions);
+        _courant[s] = 0f;
+    }
+
+    /// <summary>
+    /// Ne garde que les rangs marques, dans leur ordre, et les ramene en tete des lignes.
+    /// Apres quoi l'ordre est l'identite : le rang r vit dans la ligne r.
+    /// </summary>
+    private Relais Compacter(bool[] garder)
+    {
+        var rel = new Relais(new int[Sources], new int[Sources], 0);
+        Array.Fill(rel.AncienRang, -1); Array.Fill(rel.RangEntrant, -1);
+        var nouveau = 0;
+        // On passe par une copie des lignes a garder : une ligne peut ecraser une ligne qui
+        // n'a pas encore ete lue si l'on deplace en place.
+        var w = new float[Sources * Longueur]; var h = new float[Sources * Positions];
+        var pos = new float[Sources]; var posC = new float[Sources]; var cen = new float[Sources];
+        var hau = new float[Sources]; var sta = new float[Sources]; var vu = new int[Sources];
+        var dq = new int[Sources]; var cl = new int[Sources]; var cour = new float[Sources];
+        for (var r = 0; r < garder.Length; r++)
+        {
+            if (!garder[r]) continue;
+            var s = _ordre[r];
+            _w.AsSpan(s * Longueur, Longueur).CopyTo(w.AsSpan(nouveau * Longueur, Longueur));
+            _hCourant.AsSpan(s * Positions, Positions).CopyTo(h.AsSpan(nouveau * Positions, Positions));
+            pos[nouveau] = _positionsApprises[s]; posC[nouveau] = _positionCourante[s];
+            cen[nouveau] = _centres[s]; hau[nouveau] = _hauteurs[s]; sta[nouveau] = _stabilite[s];
+            vu[nouveau] = _vues[s]; dq[nouveau] = _disque[s]; cl[nouveau] = _classeCourante[s]; cour[nouveau] = _courant[s];
+            rel.AncienRang[nouveau] = r;
+            nouveau++;
+        }
+        Array.Copy(w, _w, w.Length); Array.Copy(h, _hCourant, h.Length); Array.Copy(h, _hKl, h.Length);
+        Array.Copy(pos, _positionsApprises, Sources); Array.Copy(posC, _positionCourante, Sources);
+        Array.Copy(cen, _centres, Sources); Array.Copy(hau, _hauteurs, Sources); Array.Copy(sta, _stabilite, Sources);
+        Array.Copy(vu, _vues, Sources); Array.Copy(dq, _disque, Sources); Array.Copy(cl, _classeCourante, Sources);
+        Array.Copy(cour, _courant, Sources);
+        for (var s = nouveau; s < Sources; s++)
+        {
+            for (var i = 0; i < Longueur; i++) _w[s * Longueur + i] = 0.1f + (float)_alea.NextDouble() * 0.9f;
+            _vues[s] = 0; _stabilite[s] = 0f; _disque[s] = 0; _courant[s] = 0f;
+        }
+        Array.Clear(_dominance);
+        for (var s = 0; s < Sources; s++) _ordre[s] = s;
+        Actives = nouveau;
+        return rel with { Actives = nouveau };
     }
 
     /// <summary>

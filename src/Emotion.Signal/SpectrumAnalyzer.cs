@@ -728,6 +728,7 @@ public sealed class SpectrumAnalyzer
     private readonly ushort[][] _motifPool = [new ushort[SourceSeparator.Sources], new ushort[SourceSeparator.Sources]];
     private readonly float[][] _caracterePool = [new float[SourceSeparator.Sources], new float[SourceSeparator.Sources]];
     private readonly int[][] _degrePool = [new int[SourceSeparator.Sources], new int[SourceSeparator.Sources]];
+    private readonly int[][] _disquePool = [new int[SourceSeparator.Sources], new int[SourceSeparator.Sources]];
     private bool[]? _gamme;
     private float _accordGamme;
 
@@ -749,7 +750,142 @@ public sealed class SpectrumAnalyzer
         _gate.Reset();
         _separation.Reset();
         _motifs.Reset();
+        _enveloppes?.Reset();
+        _etendues.Oublier();
+        Array.Clear(_creteSource);
+        _rythmeSu = false;
+        _bpmCue = 0f;
+        _entrante = null;
     }
+
+    // ------------------------------------------------------------------ le relais
+
+    /// <summary>
+    /// LE ROLE : le cue apprend, le master joue. En master, la separation ne forme jamais de
+    /// portrait ; elle recoit ceux du cue par <see cref="Accueillir"/>. Seul, l'analyseur
+    /// fait tout lui-meme, comme quand il n'y a qu'une entree.
+    /// </summary>
+    public RoleAnalyseur Role
+    {
+        get => _role;
+        set { _role = value; _separation.SuiviSeul = value == RoleAnalyseur.Master; }
+    }
+    private RoleAnalyseur _role;
+
+    /// <summary>
+    /// L'EMPREINTE D'UN DISQUE, telle que le cue la transmet au master : le portrait de la
+    /// separation, puis pour chaque case publiee (les gabarits, et le reste en dernier) son
+    /// motif, son caractere, sa crete et son etendue melodique ; le tempo appris et la fiche.
+    /// </summary>
+    public sealed record EmpreinteDisque(
+        SourceSeparator.Empreinte Sources,
+        float[][] Motifs, float[] StabiliteMotifs, int[] MesuresVues,
+        float[] Caracteres, bool[] CaractereConnu,
+        float[] Cretes, (float Bas, float Haut, int Vues)[] Etendues,
+        float Bpm, string? Camelot)
+    {
+        /// <summary>Cases publiees : les gabarits, plus le reste.</summary>
+        public int Publiees => Motifs.Length;
+    }
+
+    public EmpreinteDisque Empreinte()
+    {
+        var sources = _separation.Portrait();
+        var n = _separation.Publiees;
+        var motifs = new float[n][]; var stab = new float[n]; var vues = new int[n];
+        var car = new float[n]; var connu = new bool[n]; var cretes = new float[n];
+        var et = new (float, float, int)[n];
+        for (var r = 0; r < n; r++)
+        {
+            (motifs[r], stab[r], vues[r]) = _motifs.Exporter(r);
+            (car[r], connu[r]) = _enveloppes?.Exporter(r) ?? (0.5f, false);
+            cretes[r] = _creteSource[r];
+            et[r] = _etendues.Exporter(r);
+        }
+        return new EmpreinteDisque(sources, motifs, stab, vues, car, connu, cretes, et, _tempo.Bpm ?? 0f, _separation.Camelot);
+    }
+
+    private EmpreinteDisque? _entrante;
+    private float _bpmCue;
+    private bool _rythmeSu;
+
+    /// <summary>
+    /// ACCUEILLE le disque qui entre : ses regles rejoignent celles du disque qui joue, et le
+    /// suivi porte les deux. Ce que l'analyseur tient par rang — motifs, caractere, crete,
+    /// etendue — suit les rangs que le relais a deplaces, et les rangs du disque entrant
+    /// recoivent ce que le cue avait mesure pour eux. Le reste est partage : il garde ce
+    /// qu'il avait, et prendra celui du disque entrant au retrait de l'autre.
+    /// </summary>
+    public void Accueillir(EmpreinteDisque e)
+    {
+        var avant = _separation.Actives;
+        var resteAvant = _separation.RangReste;
+        var rel = _separation.AccueillirPortrait(e.Sources);
+        _enveloppes ??= new SourceEnvelope(SourceSeparator.Sources, _frameSeconds);
+        Deplacer(rel, avant, resteAvant);
+        for (var r = 0; r < SourceSeparator.Sources; r++)
+        {
+            var rE = rel.RangEntrant[r];
+            if (rE < 0 || rE >= e.Publiees) continue;
+            _motifs.Importer(r, e.Motifs[rE], e.StabiliteMotifs[rE], e.MesuresVues[rE]);
+            _enveloppes.Importer(r, e.Caracteres[rE], e.CaractereConnu[rE]);
+            _creteSource[r] = e.Cretes[rE];
+            _etendues.Importer(r, e.Etendues[rE].Bas, e.Etendues[rE].Haut, e.Etendues[rE].Vues);
+        }
+        // Le reste, quand rien ne jouait : il vient du disque entrant tout de suite.
+        if (avant == 0 && e.Publiees > e.Sources.Actives) PoserReste(e, _separation.RangReste);
+        _entrante = e;
+        _bpmCue = e.Bpm;
+        if (e.Camelot is not null) Gamme(e.Camelot);
+    }
+
+    /// <summary>
+    /// RETIRE le disque qui sortait : celui qui est entre devient le disque qui joue, et le
+    /// reste prend le motif et le caractere que le cue lui avait mesures.
+    /// </summary>
+    public void Retirer()
+    {
+        var avant = _separation.Actives;
+        var resteAvant = _separation.RangReste;
+        var rel = _separation.RetirerDisque(0);
+        Deplacer(rel, avant, resteAvant);
+        if (_entrante is { } e && e.Publiees > e.Sources.Actives) PoserReste(e, _separation.RangReste);
+        _entrante = null;
+        _rythmeSu = false;
+    }
+
+    private void PoserReste(EmpreinteDisque e, int rangReste)
+    {
+        if (rangReste < 0) return;
+        var rE = e.Sources.Actives;   // le reste est la derniere case publiee de l'empreinte
+        _motifs.Importer(rangReste, e.Motifs[rE], e.StabiliteMotifs[rE], e.MesuresVues[rE]);
+        _enveloppes?.Importer(rangReste, e.Caracteres[rE], e.CaractereConnu[rE]);
+        _creteSource[rangReste] = e.Cretes[rE];
+        _etendues.Importer(rangReste, e.Etendues[rE].Bas, e.Etendues[rE].Haut, e.Etendues[rE].Vues);
+    }
+
+    /// <summary>Deplace l'etat par rang selon le relais ; le reste suit sa case.</summary>
+    private void Deplacer(SourceSeparator.Relais rel, int activesAvant, int resteAvant)
+    {
+        var map = new int[SourceSeparator.Sources];
+        Array.Fill(map, -1);
+        for (var r = 0; r < rel.Actives; r++) map[r] = rel.AncienRang[r];
+        var resteApres = _separation.RangReste;
+        if (resteApres >= 0 && resteAvant >= 0) map[resteApres] = resteAvant;
+        _motifs.Reorganiser(map);
+        _enveloppes?.Reorganiser(map);
+        _etendues.Reorganiser(map);
+        var cretes = new float[SourceSeparator.Sources];
+        for (var r = 0; r < map.Length; r++) if (map[r] >= 0) cretes[r] = _creteSource[map[r]];
+        Array.Copy(cretes, _creteSource, cretes.Length);
+    }
+
+    /// <summary>Le pitch : le tempo mesure rapporte a celui que le cue a appris, 1 sans relais.</summary>
+    public float Pitch =>
+        _bpmCue > 0f && _tempo.Bpm is { } b && b > 0f ? b / _bpmCue : 1f;
+
+    /// <summary>Le rythme est-il su (le verrou rapide, celui du boom-tchak) ?</summary>
+    public bool RythmeSu => _rythmeSu;
 
     /// <summary>Derniere rupture de continuite constatee, pour le journal.</summary>
     public string LastBreak => _continuity.Reason;
@@ -952,9 +1088,11 @@ public sealed class SpectrumAnalyzer
             // d'octave est presque toujours partagee, la jauge restait basse en decrivant un
             // objet que personne ne regardait.
             var etats = _lanePool[_sepTurn];
+            var disques = _disquePool[_sepTurn];
             for (var i = 0; i < SourceSeparator.Sources; i++)
             {
                 var brut = _voices.EtatDe(i);
+                disques[i] = _separation.DisqueOrdonne(i);
 
                 // L'ENVELOPPE SE MESURE SUR CE QUI EST AFFICHE, pour la meme raison que la
                 // nettete : elle etait prise sur les bandes d'octave, c'est-a-dire sur
@@ -978,6 +1116,7 @@ public sealed class SpectrumAnalyzer
                     Pique = _enveloppes.Pique(i),
                     Tenue = _enveloppes.Tenue(i),
                     Retrait = _enveloppes.Muet(i),
+                    Disque = disques[i],
                 };
             }
 
@@ -1008,9 +1147,20 @@ public sealed class SpectrumAnalyzer
             }
             if (!_separation.Verrou && _motifs.Verrouille(publiees)) _separation.Verrouiller();
 
+            // LE VERROU A DEUX VITESSES. Le rythme se sait apres trois mesures de boom-tchak
+            // tenu : on resserre alors la preference de tempo autour de ce qu'on mesure, et
+            // l'on ne cherche plus que la variance — le pitch que le DJ pousse. Les sonorites,
+            // elles, continuent de s'apprendre jusqu'a ce que leurs motifs tiennent.
+            if (!_rythmeSu && _separation.RangReste is var rr && rr >= 0 && _motifs.VerrouRythme(rr))
+            {
+                _rythmeSu = true;
+                if (_tempo.Bpm is { } bpmSu) _tempo.Preferer(bpmSu);
+            }
+
             voices = voices with { Levels = act, Pitches = haut, Lanes = etats,
                                    Actives = publiees, Motifs = masques, Verrou = _separation.Verrou,
-                                   Caracteres = caracteres, Degres = degres, AccordGamme = _accordGamme };
+                                   Caracteres = caracteres, Degres = degres, AccordGamme = _accordGamme,
+                                   Disques = disques, VerrouRythme = _rythmeSu, Pitch = Pitch };
         }
 
         // Flux spectral positif : on ne compte que ce qui monte. Une note qui s'eteint

@@ -113,7 +113,12 @@ P_DEGRES = 209         # un quartet par source : le degre joue dans la gamme de 
 P_ACCORD_GAMME = 215   # l'accord du chromagramme avec la gamme de la fiche, 0 a 255
 DEGRES = ["I", "II", "III", "IV", "V", "VI", "VII", "·"]
 P_MOTIFS = 243         # six mots de seize bits : le motif de chaque source, une case par double croche
-P_VERROU = 255         # 1 quand le morceau est su et que le moteur ne retouche plus
+P_VERROU = 255         # bit 0 : les sonorites sont sues ; bit 1 : le rythme est su (le verrou rapide, celui du boom-tchak)
+P_PITCH = 121          # le tempo mesure au master rapporte a celui appris au cue, en quarts de pour cent signes
+P_MOTIFS_6 = 122       # les motifs des sources 6 et 7, deux mots de seize bits
+P_CARACTERES_3 = 126   # caracteres des sources 6 et 7, un quartet chacune
+P_DEGRES_3 = 127       # degres des sources 6 et 7
+S_DISQUE_DECALAGE = 4  # bits 4 et 5 des drapeaux d'une source : 0 le disque qui joue, 1 celui qui entre, 2 le reste partage
 
 # Ce qui se repete, et tous les combien. Trois octets : periode en mesures, certitude,
 # bande. Une periode nulle veut dire « on ne sait pas », et c'est une reponse.
@@ -266,11 +271,21 @@ class Paquet:
         self.coup_grave = bool(coups & 1)
         self.bandes = [mm[base + P_BANDES + i] / 255.0 for i in range(12)]
         self.actives = mm[base + P_SOURCES_ACTIVES]
-        self.verrou = bool(mm[base + P_VERROU])
+        self.verrou = bool(mm[base + P_VERROU] & 1)
+        self.verrou_rythme = bool(mm[base + P_VERROU] & 2)
+        # LE PITCH : la seule chose que le master cherche encore une fois les regles recues.
+        pitch = mm[base + P_PITCH]
+        self.pitch = 1.0 + (pitch - 256 if pitch > 127 else pitch) / 400.0
         self.accord_gamme = mm[base + P_ACCORD_GAMME] / 255.0
         self.sources = []
-        for r in range(6):
+        # HUIT CASES, PARTAGEES ENTRE LE DISQUE QUI JOUE ET CELUI QUI ENTRE. Les six
+        # premieres ont leurs mots a 243, 201 et 209 ; les deux dernieres, arrivees avec le
+        # relais, vivent a 122, 126 et 127.
+        for r in range(8):
             o = base + P_SOURCES + r * SOURCE_PAS
+            o_motif = base + P_MOTIFS + 2 * r if r < 6 else base + P_MOTIFS_6 + 2 * (r - 6)
+            o_car = base + P_CARACTERES + r // 2 if r < 6 else base + P_CARACTERES_3
+            o_deg = base + P_DEGRES + r // 2 if r < 6 else base + P_DEGRES_3
             self.sources.append({
                 "niveau": mm[o + S_NIVEAU] / 255.0,
                 "hauteur": mm[o + S_HAUTEUR] / 255.0,
@@ -278,6 +293,9 @@ class Paquet:
                 # LA DOMINANCE : la part de la source qui est vraiment a elle (8 crans). Le
                 # reste est discret, partage — et se dessine dans une autre couleur.
                 "dominance": (mm[o + S_DRAPEAUX] >> 1 & 7) / 7.0,
+                # LE DISQUE : 0 celui qui joue, 1 celui qui entre, 2 le reste partage pendant
+                # un fondu. C'est ce qui fait suivre l'image au fader.
+                "disque": mm[o + S_DRAPEAUX] >> S_DISQUE_DECALAGE & 3,
                 "nettete": mm[o + S_NETTETE] / 255.0,
                 "entendu": mm[o + S_ENTENDU] / 255.0,
                 "nom": mm[o + S_NOM],
@@ -291,11 +309,11 @@ class Paquet:
                 # « Quand le kick est en retrait pendant un moment, on est censé le savoir. »
                 "retrait": mm[base + P_RETRAITS + r] / 16.0,
                 # LE MOTIF : ou, dans la mesure, cette source monte. Le morse a venir.
-                "motif": struct.unpack_from("<H", mm, base + P_MOTIFS + 2 * r)[0],
+                "motif": struct.unpack_from("<H", mm, o_motif)[0],
                 # LE CARACTERE, sur la duree : ce que le rendu lit pour choisir son geste.
-                "caractere": (mm[base + P_CARACTERES + r // 2] >> (4 * (r % 2)) & 0xF) / 15.0,
+                "caractere": (mm[o_car] >> (4 * (r % 2)) & 0xF) / 15.0,
                 # LE DEGRE : ce que la source joue dans la gamme de la fiche, quand il y en a une.
-                "degre": mm[base + P_DEGRES + r // 2] >> (4 * (r % 2)) & 0xF,
+                "degre": mm[o_deg] >> (4 * (r % 2)) & 0xF,
             })
 
 
@@ -472,8 +490,8 @@ class Mur(QWidget):
         self.kick = Pulse(3.2)
         self.clap = Pulse(4.5)
         self.charley = Pulse(7.0)
-        self.coups = [Pulse(4.0) for _ in range(6)]
-        self.gestes = [Geste() for _ in range(6)]
+        self.coups = [Pulse(4.0) for _ in range(8)]
+        self.gestes = [Geste() for _ in range(8)]
         self.grave = Pulse(3.0)
 
         # L'ANNONCE DE TEMPO NE DURE QU'UNE IMAGE D'ANALYSE. On la tient quatre temps a
@@ -970,8 +988,9 @@ class Mur(QWidget):
         Le rang ne decide pas de la forme : le paquet porte un octet par source et c'est lui
         qui commande. L'ordre du grave a l'aigu n'est qu'un repli quand la fiche n'a rien dit.
         """
-        cols, rangs = 3, 2
-        larg = (largeur - 2 * 14) / cols
+        # QUATRE COLONNES SUR DEUX RANGS : huit cases, celles des deux disques pendant le fondu.
+        cols, rangs = 4, 2
+        larg = (largeur - 3 * 14) / cols
         haut = 132
         self.cases = []
         for r, s in enumerate(p.sources):
@@ -1006,6 +1025,10 @@ class Mur(QWidget):
                       "tenu" if s["caractere"] > 0.8 else
                       "pincé")
             gauche = f"{r + 1}·{s['nom']}" if s["nom"] else f"{r + 1}"
+            # LE DISQUE, quand deux sont suivis : A celui qui joue, B celui qui entre, A+B le
+            # reste partage. Rien n'est ecrit hors fondu, il n'y a alors qu'un disque.
+            if any(x["disque"] for x in p.sources[:max(1, p.actives)]):
+                gauche += ("  A", "  B", "  A+B")[min(2, s["disque"])]
             # LE DEGRE JOUE, quand la fiche donne la gamme : I la tonique, V la quinte, · hors
             # gamme. C'est ce qui survit a une transition Camelot.
             degre = DEGRES[s["degre"]] if s["degre"] < len(DEGRES) else ""

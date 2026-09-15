@@ -127,6 +127,60 @@ moteur ne verrouille pas : Timeline Explorer n'a de motif stable nulle part, pas
 juge extérieur, parce que la grille y dérive — la stabilité du motif est aussi un indicateur
 de santé de la grille.
 
+### Le relais complet : deux portraits, un seul suivi
+
+Le DJ l'a décrit comme il mixe, et c'est l'architecture :
+
+> « L'analyse du cue et l'analyse du master, c'est deux choses qui s'exécutent en
+>   parallèle. L'un fixe les règles d'analyse, l'autre analyse en temps réel avec déjà
+>   toutes les informations nécessaires. Si j'enlève les basses de A, le master saura que
+>   les basses de A ne sont pas là ; on aura le tchak côté A et la basse côté B qui tournent
+>   en même temps, et l'image suivra le fade d'un son à l'autre. »
+
+**Avant, le relais ne transmettait que le tempo.** Gabarits, reste, accordage, caractères,
+motifs et verrou mouraient dans l'analyseur du cue, et le master réapprenait pendant
+quarante secondes — sur une somme de deux disques, c'est-à-dire exactement le signal sur
+lequel l'apprentissage échoue.
+
+**Maintenant, le master ne forme jamais de portrait** (`RoleAnalyseur.Master`,
+`SourceSeparator.SuiviSeul`). Il reçoit ceux du cue, au rythme du fader mesuré par
+`BlendEstimator`, en trois temps :
+
+| fondu | ce qui se passe |
+|---|---|
+| ≥ 0,15 | **accueil** : l'empreinte du disque qui entre — gabarits, positions, accordage, motifs, caractères, crêtes, étendues, tempo, fiche — rejoint celle du disque qui joue. Le suivi porte **les deux jeux de gabarits dans une seule passe** : sur chaque image, ce qui est à A et ce qui est à B. Chaque case publiée porte son disque (bits 4–5 du drapeau : 0 celui qui joue, 1 celui qui entre, 2 le reste partagé) |
+| ≥ 0,5 | le tempo, comme avant |
+| ≥ 0,9 | **retrait** : le disque qui sortait quitte le suivi, celui qui est entré devient le disque qui joue (ses cases passent à 0), et le cue se remet à zéro pour le suivant |
+
+Huit cases partagées, au plus **quatre gabarits par disque** pendant le fondu (les plus
+entendus), et **un seul reste** : un résidu porte les deux batteries et ne se signe pas. Les
+gabarits glissent, donc ils ne dépendent pas de l'accordage ; seule la position où chacun a
+joué est ramenée sur l'axe courant.
+
+**Mesuré** (`outils/relais.py`) : deux disques du bac, quarante secondes de A, vingt secondes
+de fondu linéaire, quarante secondes de B ; deux cues apprennent A et B sur leur fichier ; le
+master suit le mélange en recevant les portraits aux instants du fondu ; juge = les stems
+Demucs de A et de B, pesés par le fader.
+
+| pendant le fondu | WordBank → Echoes | Dead Internet → Glyph Chamber |
+|---|---|---|
+| cases dont le stem le plus proche est **du disque annoncé** | **5 / 5** | **4 / 4** |
+| la somme des cases de A suit le fader de A | 0,71 | 0,76 |
+| la somme des cases de B suit le fader de B | 0,55 | 0,85 |
+| corrélation d'une case avec l'autre disque, rapportée à la sienne (médiane) | −0,43 | −0,17 |
+
+La basse de Dead Internet reste à 0,73 avec `bass` de A pendant que la nappe de Glyph
+Chamber monte à 0,86 avec `other` de B : **le tchak côté A et la basse côté B, en même
+temps.** Ce qui n'est pas encore mesuré : la variance que le master publie — le pitch
+(octet 121, tempo mesuré rapporté au tempo appris) et les niveaux rapportés aux crêtes du
+cue — sur un vrai fader poussé.
+
+**Et le verrou a deux vitesses.** « Après deux ou trois boom-tchak on a déjà l'info sur le
+BPM, et le boom-tchak ne va pas changer. » Le motif du reste tenu sur quatre mesures
+(`MotifSources.VerrouRythme`) resserre la préférence de tempo autour de ce qu'on mesure et
+publie le bit 1 du verrou ; les sonorités continuent de s'apprendre jusqu'à ce que leurs
+motifs tiennent, seize mesures, bit 0.
+
 ### Ce que le rendu reçoit, par source
 
 | octet | ce qu'il dit | d'où il vient |

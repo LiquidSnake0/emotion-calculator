@@ -51,6 +51,24 @@ public sealed class DualAudioSource : IAudioSource
     /// </summary>
     private const float HandoverAt = 0.5f;
 
+    /// <summary>
+    /// LE RELAIS COMPLET, EN TROIS TEMPS, AU RYTHME DU FADER.
+    ///
+    ///   accueil   des que le disque qui entre s'entend dans le melange, ses gabarits, ses
+    ///             motifs et son caractere rejoignent ceux du disque qui joue dans le suivi
+    ///             du master. Deux portraits, un seul suivi : l'image suit le fondu.
+    ///   tempo     a mi-fondu, comme avant : le master reprend le tempo appris au cue.
+    ///   retrait   quand le fondu est fini, le disque qui sortait est retire du suivi, celui
+    ///             qui est entre devient le disque qui joue, et le cue se remet a zero pour
+    ///             le disque suivant.
+    ///
+    /// Le master ne forme jamais de portrait lui-meme : il ne fait que suivre ce qu'on lui
+    /// transmet, et mesurer ce qui a bouge — le pitch, les niveaux.
+    /// </summary>
+    private const float AccueilAt = 0.15f;
+    private const float RetraitAt = 0.9f;
+
+    private int _phase;   // 0 rien, 1 accueilli, 2 tempo relaye, 3 retire
     private bool _handedOver;
 
     /// <summary>
@@ -68,6 +86,10 @@ public sealed class DualAudioSource : IAudioSource
     {
         _master = master;
         _cue = cue;
+        // Les roles : le cue apprend, le master joue. Le master ne formera jamais de portrait
+        // sur ce qu'il entend — c'est une somme de deux disques.
+        if (master.Analyzer is { } am) am.Role = RoleAnalyseur.Master;
+        if (cue.Analyzer is { } ac) ac.Role = RoleAnalyseur.Cue;
     }
 
     public string Name => $"{_master.Name} + cue {_cue.Name}";
@@ -97,7 +119,11 @@ public sealed class DualAudioSource : IAudioSource
     {
         _blend.Reset();
         _handedOver = false;
+        _phase = 0;
     }
+
+    /// <summary>Ou en est le relais, pour le journal et la sonde : 0 rien, 1 accueilli, 2 tempo, 3 retire.</summary>
+    public int Phase => _phase;
 
     public async IAsyncEnumerable<VisualFrame> ReadAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
@@ -127,7 +153,15 @@ public sealed class DualAudioSource : IAudioSource
             {
                 var blend = _blend.Feed(frame.Bands, _lastCueBands);
 
-                // Le passage de relais, une seule fois par transition.
+                // L'ACCUEIL : le disque qui entre s'entend, ses regles passent au master.
+                if (_phase == 0 && blend >= AccueilAt
+                    && _cue.Analyzer is { } ac0 && _master.Analyzer is { } am0 && ac0.Separation.Pret)
+                {
+                    am0.Accueillir(ac0.Empreinte());
+                    _phase = 1;
+                }
+
+                // Le passage de relais du tempo, une seule fois par transition.
                 if (!_handedOver && blend >= HandoverAt)
                 {
                     var cue = CueFrame;
@@ -136,6 +170,16 @@ public sealed class DualAudioSource : IAudioSource
                         p.AdoptTempo(bpm, frame.T);
                         _handedOver = true;
                     }
+                    if (_phase == 1) _phase = 2;
+                }
+
+                // LE RETRAIT : le fondu est fini, le disque qui sortait quitte le suivi et le
+                // cue est libre pour le suivant.
+                if (_phase is 1 or 2 && blend >= RetraitAt && _master.Analyzer is { } am3)
+                {
+                    am3.Retirer();
+                    _cue.NewTrack();
+                    _phase = 3;
                 }
 
                 // PENDANT LE FONDU, LE MASTER SUIT MAIS N'APPREND PLUS.

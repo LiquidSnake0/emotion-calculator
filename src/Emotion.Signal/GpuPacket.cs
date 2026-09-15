@@ -307,14 +307,45 @@ public struct GpuPacket
     /// </summary>
     public const int SourceShape = 7;
 
-    /// <summary>Combien de sources la separation publie aujourd'hui.</summary>
-    public const int SourceCount = 6;
+    /// <summary>
+    /// Combien de cases de source le paquet ecrit : les huit, partagees entre le disque qui
+    /// joue et celui qui entre pendant un fondu.
+    /// </summary>
+    public const int SourceCount = 8;
 
     /// <summary>Drapeau d'attaque, dans l'octet de drapeaux d'une source.</summary>
     public const byte SourceHitBit = 1;
 
     /// <summary>Les bits 1 a 3 du drapeau : la dominance de la source, de 0 a 7.</summary>
     public const int SourceDominanceShift = 1;
+
+    /// <summary>
+    /// Les bits 4 et 5 du drapeau : LE DISQUE. 0 celui qui joue, 1 celui qui entre, 2 le
+    /// reste partage pendant un fondu. C'est ce qui permet a l'image de suivre le fader :
+    /// « le tchak cote A et la basse cote B qui tournent en meme temps ».
+    /// </summary>
+    public const int SourceDisqueShift = 4;
+
+    /// <summary>
+    /// LE PITCH, a 121 : le tempo mesure au master rapporte a celui que le cue a appris, en
+    /// quarts de pour cent signes (-127 … +127, soit ±32 %). Zero tant qu'aucun relais n'a eu
+    /// lieu ou que le DJ n'a pas touche au fader. C'est la variance que le master mesure, la
+    /// seule chose qu'il cherche encore une fois les regles recues.
+    /// </summary>
+    public const int PitchOffset = 121;
+    [FieldOffset(PitchOffset)] public sbyte PitchRelais;
+
+    /// <summary>Les motifs des sources 6 et 7, a 122 et 124 : la suite des six mots de 243.</summary>
+    [FieldOffset(122)] public ushort MotifSource6;
+    [FieldOffset(124)] public ushort MotifSource7;
+
+    /// <summary>Caracteres (126) et degres (127) des sources 6 et 7, un quartet chacune.</summary>
+    [FieldOffset(126)] public byte Caracteres3;
+    [FieldOffset(127)] public byte Degres3;
+
+    /// <summary>Dans l'octet du verrou : bit 0 les sonorites sont sues, bit 1 le rythme est su.</summary>
+    public const byte VerrouSourcesBit = 1;
+    public const byte VerrouRythmeBit = 2;
 
     /// <summary>La zone des sources, vue comme des octets bruts.</summary>
     [FieldOffset(SourceOffset)] public SourceBlock Sources;
@@ -549,7 +580,8 @@ public struct GpuPacket
         // (discret, partage). « Le GPU saura differencier les deux si on met un point a ce
         // qui est extrait. »
         var dominance = Math.Clamp((int)(state.Dominance * 7.999f), 0, 7);
-        slot[SourceFlags] = (byte)((state.Hit ? SourceHitBit : 0) | dominance << SourceDominanceShift);
+        var disque = Math.Clamp(state.Disque, 0, 3);
+        slot[SourceFlags] = (byte)((state.Hit ? SourceHitBit : 0) | dominance << SourceDominanceShift | disque << SourceDisqueShift);
         slot[SourceLabel] = label;
         slot[SourceHeard] = Byte255(state.Heard);
         slot[SourceSharp] = Byte255(state.Sharpness);
@@ -692,13 +724,15 @@ public struct GpuPacket
         p.GridSure = (byte)Math.Clamp(f.Structure.Confidence * 255f, 0f, 255f);
         p.GridAgreement = (byte)Math.Clamp(f.GridAgreement * 255f, 0f, 255f);
         p.SourceActives = (byte)Math.Clamp(f.Voices.Actives, 0, SourceSlots);
-        p.Verrou = f.Voices.Verrou ? (byte)1 : (byte)0;
+        p.Verrou = (byte)((f.Voices.Verrou ? VerrouSourcesBit : 0) | (f.Voices.VerrouRythme ? VerrouRythmeBit : 0));
+        p.PitchRelais = (sbyte)Math.Clamp(MathF.Round((f.Voices.Pitch - 1f) * 400f), -127f, 127f);
         if (f.Voices.Caracteres is { } caracteres)
         {
             byte Q(int i) => (byte)(i < caracteres.Length ? Math.Clamp((int)MathF.Round(caracteres[i] * 15f), 0, 15) : 0);
             p.Caracteres0 = (byte)(Q(0) | Q(1) << 4);
             p.Caracteres1 = (byte)(Q(2) | Q(3) << 4);
             p.Caracteres2 = (byte)(Q(4) | Q(5) << 4);
+            p.Caracteres3 = (byte)(Q(6) | Q(7) << 4);
         }
         if (f.Voices.Degres is { } degres)
         {
@@ -706,6 +740,7 @@ public struct GpuPacket
             p.Degres0 = (byte)(D(0) | D(1) << 4);
             p.Degres1 = (byte)(D(2) | D(3) << 4);
             p.Degres2 = (byte)(D(4) | D(5) << 4);
+            p.Degres3 = (byte)(D(6) | D(7) << 4);
         }
         p.AccordGamme = Byte255(f.Voices.AccordGamme);
         if (f.Voices.Motifs is { } motifs)
@@ -713,6 +748,7 @@ public struct GpuPacket
             ushort M(int i) => i < motifs.Length ? motifs[i] : (ushort)0;
             p.MotifSource0 = M(0); p.MotifSource1 = M(1); p.MotifSource2 = M(2);
             p.MotifSource3 = M(3); p.MotifSource4 = M(4); p.MotifSource5 = M(5);
+            p.MotifSource6 = M(6); p.MotifSource7 = M(7);
         }
         p.Sides = (byte)track.Sides;
         p.Minor = track.Minor ? (byte)1 : (byte)0;

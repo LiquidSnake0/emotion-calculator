@@ -119,6 +119,33 @@ public sealed class ContourRange
         return Rendre(rang, hauteur);
     }
 
+    /// <summary>Les bornes d'un rang, pour l'empreinte.</summary>
+    public (float Bas, float Haut, int Vues) Exporter(int rang) =>
+        rang >= 0 && rang < _bas.Length ? (_bas[rang], _haut[rang], _vues[rang]) : (float.MaxValue, float.MinValue, 0);
+
+    public void Importer(int rang, float bas, float haut, int vues)
+    {
+        if (rang < 0 || rang >= _bas.Length) return;
+        _bas[rang] = bas; _haut[rang] = haut; _vues[rang] = vues;
+    }
+
+    public void Vider(int rang) => Importer(rang, float.MaxValue, float.MinValue, 0);
+
+    /// <summary>Deplace les bornes de chaque rang selon le relais (voir <see cref="MotifSources.Reorganiser"/>).</summary>
+    public void Reorganiser(ReadOnlySpan<int> ancienRang)
+    {
+        var n = _bas.Length;
+        var bas = new float[n]; var haut = new float[n]; var vues = new int[n];
+        Array.Fill(bas, float.MaxValue); Array.Fill(haut, float.MinValue);
+        for (var r = 0; r < n; r++)
+        {
+            var a = r < ancienRang.Length ? ancienRang[r] : -1;
+            if (a < 0 || a >= n) continue;
+            bas[r] = _bas[a]; haut[r] = _haut[a]; vues[r] = _vues[a];
+        }
+        Array.Copy(bas, _bas, n); Array.Copy(haut, _haut, n); Array.Copy(vues, _vues, n);
+    }
+
     private float Rendre(int rang, float hauteur)
     {
         if (_vues[rang] < Assez) return hauteur;

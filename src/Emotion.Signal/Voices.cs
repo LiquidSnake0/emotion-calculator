@@ -26,7 +26,12 @@ public readonly record struct Voices(
     float[]? Caracteres = null,
     // LE DEGRE que joue chaque source dans la gamme de la fiche : 0 tonique … 6, 7 hors
     // gamme, 15 inconnu. Et l'accord du chromagramme avec cette gamme, 0 a 1.
-    int[]? Degres = null, float AccordGamme = 0f)
+    int[]? Degres = null, float AccordGamme = 0f,
+    // LE RELAIS. A quel disque appartient chaque source (0 celui qui joue, 1 celui qui
+    // entre, 2 le reste partage pendant un fondu) ; le rythme est-il su (le verrou rapide,
+    // celui du boom-tchak) ; et le pitch : le tempo qu'on mesure au master rapporte a celui
+    // que le cue a appris — 1 si le DJ n'a pas touche au fader.
+    int[]? Disques = null, bool VerrouRythme = false, float Pitch = 1f)
 {
     /// <summary>
     /// Nombre de registres tonals suivis separement.

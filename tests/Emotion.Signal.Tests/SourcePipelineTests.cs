@@ -64,7 +64,7 @@ public class SourcePipelineTests
                 new LaneState((i + 1) / 10f, (i + 1) / 20f, i % 2 == 0,
                               Heard: (i + 1) / 8f, Sharpness: (i + 1) / 7f,
                               Brightness: (i + 1) / 9f),
-                label: (byte)(i + 10), shape: (byte)(6 - i));
+                label: (byte)(i + 10), shape: (byte)(8 - i));
 
         for (var i = 0; i < GpuPacket.SourceCount; i++)
         {
@@ -77,7 +77,7 @@ public class SourcePipelineTests
             // sans s'attendre : la forme est connue des la premiere image, l'empreinte met
             // des secondes a se former.
             Assert.Equal((byte)(i + 10), s.Label);
-            Assert.Equal((byte)(6 - i), s.Shape);
+            Assert.Equal((byte)(8 - i), s.Shape);
             Assert.Equal((byte)Math.Clamp((i + 1) / 8f * 255f, 0f, 255f), s.Heard);
             Assert.Equal((byte)Math.Clamp((i + 1) / 7f * 255f, 0f, 255f), s.Sharp);
             Assert.Equal((byte)Math.Clamp((i + 1) / 9f * 255f, 0f, 255f), s.Brightness);
