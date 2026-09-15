@@ -88,7 +88,16 @@ public struct GpuPacket
     [FieldOffset(46)] public byte B;
 
 
-    /// <summary>Les douze bandes, grave a aigu, chacune 0 a 1. 48 octets.</summary>
+    /// <summary>
+    /// Les douze bandes, grave a aigu, chacune 0 a 255 pour 0 a 1. Douze octets, de 48 a 59.
+    ///
+    /// ELLES ETAIENT DOUZE FLOTTANTS, ET PERSONNE NE LES LISAIT COMME TELS : la fenetre
+    /// lisait douze octets a 48 depuis toujours, et affichait donc l'octet bas d'un
+    /// flottant. Le paquet etait par ailleurs plein a l'octet pres, et deux champs se
+    /// chevauchaient a 215 (l'accord de gamme ecrasait la nettete d'evenement). Les bandes
+    /// en octets rendent 36 octets — <see cref="RelaisOffset"/>, <see cref="AccordGammeOffset"/>,
+    /// et de la place pour la suite — et un octet suffit a un niveau qui pilote un visuel.
+    /// </summary>
     [FieldOffset(48)] public Bands12 Bands;
 
     /// <summary>
@@ -320,11 +329,26 @@ public struct GpuPacket
     public const int SourceDominanceShift = 1;
 
     /// <summary>
-    /// Les bits 4 et 5 du drapeau : LE DISQUE. 0 celui qui joue, 1 celui qui entre, 2 le
-    /// reste partage pendant un fondu. C'est ce qui permet a l'image de suivre le fader :
-    /// « le tchak cote A et la basse cote B qui tournent en meme temps ».
+    /// Les bits 4 et 5 du drapeau : LA PLATINE. 1 ou 2, l'identite du disque tant qu'il
+    /// tourne ; 3 le reste partage pendant un fondu ; 0 inconnu. C'est ce qui permet a
+    /// l'image de suivre le fader — « le tchak cote A et la basse cote B qui tournent en
+    /// meme temps » — SANS que les cases sautent de cote au relais : « celui qui joue » et
+    /// « celui qui entre » changent de sens au retrait, une platine non. L'octet
+    /// <see cref="RelaisOffset"/> dit laquelle joue.
     /// </summary>
-    public const int SourceDisqueShift = 4;
+    public const int SourcePlatineShift = 4;
+
+    /// <summary>
+    /// L'ETAT DU RELAIS, a 212 : bits 0–1 la platine qui joue (1 ou 2, 0 si aucune), bit 2
+    /// un fondu est en cours (deux portraits suivis), bits 4–5 la platine qui entre (0 si
+    /// aucune). Le rendu compose une scene par platine et lit ici de quel cote va le fader.
+    /// (Il a d'abord ete pose sur un octet « libre » qui ne l'etait pas — au milieu des
+    /// bandes, alors douze flottants de 48 a 95 : un octet libre se verifie sur la taille des
+    /// champs, pas sur leur nombre. D'ou le passage des bandes en octets.)
+    /// </summary>
+    public const int RelaisOffset = 60;
+    [FieldOffset(RelaisOffset)] public byte Relais;
+    public const byte RelaisFonduBit = 4;
 
     /// <summary>
     /// LE PITCH, a 121 : le tempo mesure au master rapporte a celui que le cue a appris, en
@@ -486,7 +510,11 @@ public struct GpuPacket
     [FieldOffset(DegresOffset)] public byte Degres0;
     [FieldOffset(DegresOffset + 1)] public byte Degres1;
     [FieldOffset(DegresOffset + 2)] public byte Degres2;
-    public const int AccordGammeOffset = 215;
+    /// <summary>
+    /// A 61 : il etait a 215, sur le meme octet que <see cref="EventSharp"/>, et l'ecrasait —
+    /// une collision decouverte en cherchant un octet libre pour le relais.
+    /// </summary>
+    public const int AccordGammeOffset = 61;
     [FieldOffset(AccordGammeOffset)] public byte AccordGamme;
 
     /// <summary>Le verrou : 1 quand le morceau est su et que le moteur ne retouche plus.</summary>
@@ -527,7 +555,7 @@ public struct GpuPacket
     [InlineArray(12)]
     public struct Bands12
     {
-        private float _first;
+        private byte _first;
     }
 
     /// <summary>
@@ -580,8 +608,8 @@ public struct GpuPacket
         // (discret, partage). « Le GPU saura differencier les deux si on met un point a ce
         // qui est extrait. »
         var dominance = Math.Clamp((int)(state.Dominance * 7.999f), 0, 7);
-        var disque = Math.Clamp(state.Disque, 0, 3);
-        slot[SourceFlags] = (byte)((state.Hit ? SourceHitBit : 0) | dominance << SourceDominanceShift | disque << SourceDisqueShift);
+        var platine = Math.Clamp(state.Platine, 0, 3);
+        slot[SourceFlags] = (byte)((state.Hit ? SourceHitBit : 0) | dominance << SourceDominanceShift | platine << SourcePlatineShift);
         slot[SourceLabel] = label;
         slot[SourceHeard] = Byte255(state.Heard);
         slot[SourceSharp] = Byte255(state.Sharpness);
@@ -726,6 +754,9 @@ public struct GpuPacket
         p.SourceActives = (byte)Math.Clamp(f.Voices.Actives, 0, SourceSlots);
         p.Verrou = (byte)((f.Voices.Verrou ? VerrouSourcesBit : 0) | (f.Voices.VerrouRythme ? VerrouRythmeBit : 0));
         p.PitchRelais = (sbyte)Math.Clamp(MathF.Round((f.Voices.Pitch - 1f) * 400f), -127f, 127f);
+        p.Relais = (byte)(Math.Clamp(f.Voices.PlatineJoue, 0, 3)
+                          | (f.Voices.PlatineEntre != 0 ? RelaisFonduBit : 0)
+                          | Math.Clamp(f.Voices.PlatineEntre, 0, 3) << 4);
         if (f.Voices.Caracteres is { } caracteres)
         {
             byte Q(int i) => (byte)(i < caracteres.Length ? Math.Clamp((int)MathF.Round(caracteres[i] * 15f), 0, 15) : 0);
@@ -776,7 +807,7 @@ public struct GpuPacket
         var bands = f.Bands;
         if (bands is not null)
             for (var i = 0; i < 12 && i < bands.Length; i++)
-                p.Bands[i] = bands[i];
+                p.Bands[i] = Byte255(bands[i]);
 
         return p;
     }

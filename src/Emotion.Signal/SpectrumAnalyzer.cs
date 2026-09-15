@@ -728,7 +728,18 @@ public sealed class SpectrumAnalyzer
     private readonly ushort[][] _motifPool = [new ushort[SourceSeparator.Sources], new ushort[SourceSeparator.Sources]];
     private readonly float[][] _caracterePool = [new float[SourceSeparator.Sources], new float[SourceSeparator.Sources]];
     private readonly int[][] _degrePool = [new int[SourceSeparator.Sources], new int[SourceSeparator.Sources]];
-    private readonly int[][] _disquePool = [new int[SourceSeparator.Sources], new int[SourceSeparator.Sources]];
+    private readonly int[][] _platinePool = [new int[SourceSeparator.Sources], new int[SourceSeparator.Sources]];
+
+    /// <summary>
+    /// L'IDENTITE DES PLATINES. Le disque qui joue est sur la platine 1 au depart ; celui qui
+    /// entre est sur l'autre, et au retrait il devient « celui qui joue » SANS changer de
+    /// platine. C'est ce que le rendu attend : une scene par platine, qui ne saute pas de
+    /// cote quand le fondu se termine.
+    /// </summary>
+    private int _platineCourante = 1;
+    private int _platineEntrante;
+    public int PlatineJoue => _platineCourante;
+    public int PlatineEntre => _separation.EnFondu ? _platineEntrante : 0;
     private bool[]? _gamme;
     private float _accordGamme;
 
@@ -754,7 +765,7 @@ public sealed class SpectrumAnalyzer
         _etendues.Oublier();
         Array.Clear(_creteSource);
         _rythmeSu = false;
-        _bpmCue = 0f;
+        _bpmCue = _bpmEntrant = 0f;
         _entrante = null;
     }
 
@@ -806,7 +817,7 @@ public sealed class SpectrumAnalyzer
     }
 
     private EmpreinteDisque? _entrante;
-    private float _bpmCue;
+    private float _bpmCue, _bpmEntrant;
     private bool _rythmeSu;
 
     /// <summary>
@@ -835,7 +846,13 @@ public sealed class SpectrumAnalyzer
         // Le reste, quand rien ne jouait : il vient du disque entrant tout de suite.
         if (avant == 0 && e.Publiees > e.Sources.Actives) PoserReste(e, _separation.RangReste);
         _entrante = e;
-        _bpmCue = e.Bpm;
+        // La reference du pitch ne change qu'au retrait : pendant le fondu, c'est encore le
+        // disque qui joue que l'on mesure. Le premier disque de la soiree n'attend pas.
+        _bpmEntrant = e.Bpm;
+        if (avant == 0) _bpmCue = e.Bpm;
+        // Le premier disque de la soiree arrive sur la platine courante ; les suivants sur
+        // l'autre, en alternance.
+        _platineEntrante = avant == 0 ? _platineCourante : 3 - _platineCourante;
         if (e.Camelot is not null) Gamme(e.Camelot);
     }
 
@@ -852,6 +869,11 @@ public sealed class SpectrumAnalyzer
         if (_entrante is { } e && e.Publiees > e.Sources.Actives) PoserReste(e, _separation.RangReste);
         _entrante = null;
         _rythmeSu = false;
+        if (_bpmEntrant > 0f) _bpmCue = _bpmEntrant;
+        _bpmEntrant = 0f;
+        // Le disque entre devient celui qui joue, et garde sa platine.
+        if (_platineEntrante != 0) _platineCourante = _platineEntrante;
+        _platineEntrante = 0;
     }
 
     private void PoserReste(EmpreinteDisque e, int rangReste)
@@ -933,7 +955,22 @@ public sealed class SpectrumAnalyzer
     /// <see cref="TempoTracker.Adopt"/> : c'est une amorce, pas un verrou, et
     /// l'analyse du master continue de chercher a partir de la.
     /// </summary>
-    public void AdoptTempo(float bpm, long tMs) => _tempo.Adopt(bpm, tMs);
+    /// <summary>
+    /// Reprend le tempo trouve par un autre analyseur, ET RECENTRE LA PREFERENCE DESSUS.
+    /// Mesure sur Dead Internet (91 BPM) → Glyph Chamber (74) : adopter 74 sans recentrer
+    /// laissait la preference resserree par le verrou rythme autour de 91, et le suivi
+    /// retombait a 97 — le triolet de 74 — d'ou un pitch publie de +31 % sur un fader
+    /// immobile. Le tempo qu'on adopte est la fiche du disque qui arrive : on cherche autour.
+    /// </summary>
+    public void AdoptTempo(float bpm, long tMs)
+    {
+        _tempo.Adopt(bpm, tMs);
+        _tempo.Preferer(bpm);
+        // Le pitch se rapporte au disque dont on vient d'adopter le tempo : des la mi-fondu,
+        // c'est celui qui entre. Sinon il annoncait −19 % pendant dix secondes, le temps que
+        // le retrait change la reference — un fader immobile ne doit pas bouger le pitch.
+        if (_separation.EnFondu && _bpmEntrant > 0f) _bpmCue = _bpmEntrant;
+    }
 
     /// <summary>
     /// Analyse une fenetre. <paramref name="samples"/> doit contenir
@@ -1088,11 +1125,14 @@ public sealed class SpectrumAnalyzer
             // d'octave est presque toujours partagee, la jauge restait basse en decrivant un
             // objet que personne ne regardait.
             var etats = _lanePool[_sepTurn];
-            var disques = _disquePool[_sepTurn];
+            var platines = _platinePool[_sepTurn];
             for (var i = 0; i < SourceSeparator.Sources; i++)
             {
                 var brut = _voices.EtatDe(i);
-                disques[i] = _separation.DisqueOrdonne(i);
+                // LA PLATINE, PAS LE ROLE. Le separateur dit « celui qui joue / celui qui
+                // entre » ; le rendu veut une identite qui ne saute pas de cote au relais.
+                platines[i] = i >= _separation.Publiees ? 0
+                    : _separation.DisqueOrdonne(i) switch { 0 => _platineCourante, 1 => _platineEntrante, _ => 3 };
 
                 // L'ENVELOPPE SE MESURE SUR CE QUI EST AFFICHE, pour la meme raison que la
                 // nettete : elle etait prise sur les bandes d'octave, c'est-a-dire sur
@@ -1116,7 +1156,7 @@ public sealed class SpectrumAnalyzer
                     Pique = _enveloppes.Pique(i),
                     Tenue = _enveloppes.Tenue(i),
                     Retrait = _enveloppes.Muet(i),
-                    Disque = disques[i],
+                    Platine = platines[i],
                 };
             }
 
@@ -1160,7 +1200,9 @@ public sealed class SpectrumAnalyzer
             voices = voices with { Levels = act, Pitches = haut, Lanes = etats,
                                    Actives = publiees, Motifs = masques, Verrou = _separation.Verrou,
                                    Caracteres = caracteres, Degres = degres, AccordGamme = _accordGamme,
-                                   Disques = disques, VerrouRythme = _rythmeSu, Pitch = Pitch };
+                                   Platines = platines, PlatineJoue = _platineCourante,
+                                   PlatineEntre = _separation.EnFondu ? _platineEntrante : 0,
+                                   VerrouRythme = _rythmeSu, Pitch = Pitch };
         }
 
         // Flux spectral positif : on ne compte que ce qui monte. Une note qui s'eteint

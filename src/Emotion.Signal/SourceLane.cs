@@ -79,8 +79,10 @@ public readonly record struct LaneState(
     // LA PART DOMINANTE : la fraction de l'energie de la source qui vit dans des cases
     // dont elle est proprietaire. Le reste est discret — partage, entendu en cachette.
     float Dominance = 0f,
-    // LE DISQUE : 0 celui qui joue, 1 celui qui entre, 2 partage (le reste pendant un fondu).
-    int Disque = 0)
+    // LA PLATINE : 1 ou 2, l'identite du disque tant qu'il tourne — elle ne change pas au
+    // relais, contrairement a « celui qui joue / celui qui entre ». 3 = partage (le reste
+    // pendant un fondu), 0 = inconnu.
+    int Platine = 0)
 {
     public static LaneState Silent => new(0f, 0.5f, false);
 

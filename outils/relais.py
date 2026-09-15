@@ -121,6 +121,7 @@ def juger(tsv, xa_stems, xb_stems, taux, dire=print):
             vivant = dans & (disque[:, r] >= 0)
             if vivant.sum() < 100: continue
             for tag in sorted(set(disque[vivant, r])):
+                if tag == 0: continue
                 sel = vivant & (disque[:, r] == tag)
                 if sel.sum() < 100: continue
                 y = niveau[sel, r]
@@ -133,8 +134,8 @@ def juger(tsv, xa_stems, xb_stems, taux, dire=print):
                     if d not in par_disque or c > par_disque[d][1]: par_disque[d] = (nom, c)
                 if not par_disque: continue
                 meilleur_d = max(par_disque, key=lambda d: par_disque[d][1])
-                nom_tag = {0: "A (joue)", 1: "B (entre)", 2: "A+B (reste)"}[tag]
-                attendu = {0: "A", 1: "B", 2: None}[tag]
+                nom_tag = {1: "P1 = A", 2: "P2 = B", 3: "reste"}.get(tag, "?")
+                attendu = {1: "A", 2: "B"}.get(tag)
                 # Le verdict ne vaut que la ou les deux disques sonnent : pendant le fondu.
                 if attendu is not None and nom_tranche == "fondu" and len(par_disque) == 2:
                     bon = meilleur_d == attendu
@@ -152,7 +153,7 @@ def juger(tsv, xa_stems, xb_stems, taux, dire=print):
     # Les cases de chaque disque suivent-elles son fader ? Somme des niveaux par tag, pendant
     # le fondu seulement — c'est la ou la question se pose.
     fondu = (temps >= AVANT) & (temps <= AVANT + FONDU)
-    for tag, nom, e in ((0, "A", envA), (1, "B", envB)):
+    for tag, nom, e in ((1, "A", envA), (2, "B", envB)):
         somme = np.array([niveau[i, disque[i] == tag].sum() for i in range(len(lignes))])
         c = correlation(somme[fondu], serie(e)[fondu])
         dire(f"  pendant le fondu, la somme des cases de {nom} suit le fader de {nom} : corr {c:5.2f}")
@@ -178,15 +179,17 @@ def main():
     print(f"melange ecrit : {chemin_mix} ({DUREE:.0f} s, A seul {AVANT:.0f} s, fondu {FONDU:.0f} s)")
 
     tsv = os.path.join(dossier, f"{a_nom}--{b_nom}.tsv")
+    pak = os.path.join(dossier, f"{a_nom}--{b_nom}.pak")
     cmd = ["dotnet", "run", "-c", "Release", "--no-build", "--project", os.path.join(RACINE, "tools", "Emotion.Probe"), "--",
            chemin_mix, "0", str(int(DUREE)), f"relaisA={os.path.join(CACHE, a_nom + '.wav')}",
-           f"relaisB={os.path.join(CACHE, b_nom + '.wav')}", f"fondu={AVANT:.0f},{AVANT + FONDU:.0f}", f"sources={tsv}"]
+           f"relaisB={os.path.join(CACHE, b_nom + '.wav')}", f"fondu={AVANT:.0f},{AVANT + FONDU:.0f}", f"sources={tsv}", f"paquets={pak}"]
     r = subprocess.run(cmd, capture_output=True, text=True)
     for l in r.stdout.splitlines():
         if l.startswith("cue ") or l.startswith("master") or "accueil de B" in l or "retrait de A" in l:
             print(l)
     if r.returncode != 0:
         print(r.stderr[-800:]); return 1
+    print(f"paquets enregistres : {pak}  (a rejouer : ./outils/fondu.sh {a_nom} {b_nom})")
 
     def stems(nom, x_ref):
         d = {}

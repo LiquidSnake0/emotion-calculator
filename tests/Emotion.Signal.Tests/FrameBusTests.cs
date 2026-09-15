@@ -158,7 +158,7 @@ public class GpuPacketTests
         Assert.Equal(0x15, p.R);
         Assert.Equal(0x43, p.G);
         Assert.Equal(0x60, p.B);
-        Assert.Equal(1f, p.Bands[11], 3);
+        Assert.Equal(255, p.Bands[11]);   // les bandes sont des octets, 0 a 255 pour 0 a 1
     }
 
     [Fact]

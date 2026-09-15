@@ -275,11 +275,11 @@ public class RelaisTests
     }
 
     [Fact]
-    public void Le_paquet_porte_le_disque_et_les_deux_verrous()
+    public void Le_paquet_porte_la_platine_et_les_deux_verrous()
     {
         var p = new GpuPacket();
-        p.WriteSource(0, new LaneState(0.5f, 0.5f, true, Dominance: 1f, Disque: 1));
-        p.WriteSource(1, new LaneState(0.5f, 0.5f, false, Dominance: 0f, Disque: 2));
+        p.WriteSource(0, new LaneState(0.5f, 0.5f, true, Dominance: 1f, Platine: 1));
+        p.WriteSource(1, new LaneState(0.5f, 0.5f, false, Dominance: 0f, Platine: 3));
         var s0 = p.ReadSource(0); var s1 = p.ReadSource(1);
         Assert.True(s0.Hit);
         Assert.False(s1.Hit);
@@ -287,9 +287,36 @@ public class RelaisTests
             System.Runtime.InteropServices.MemoryMarshal.CreateSpan(ref p, 1)).ToArray();
         var d0 = octets[GpuPacket.SourceOffset + 0 * GpuPacket.SourceStride + GpuPacket.SourceFlags];
         var d1 = octets[GpuPacket.SourceOffset + 1 * GpuPacket.SourceStride + GpuPacket.SourceFlags];
-        Assert.Equal(1, (d0 >> GpuPacket.SourceDisqueShift) & 3);
-        Assert.Equal(2, (d1 >> GpuPacket.SourceDisqueShift) & 3);
+        Assert.Equal(1, (d0 >> GpuPacket.SourcePlatineShift) & 3);
+        Assert.Equal(3, (d1 >> GpuPacket.SourcePlatineShift) & 3);
         Assert.Equal(7, (d0 >> GpuPacket.SourceDominanceShift) & 7);
+    }
+
+    [Fact]
+    public void La_platine_ne_saute_pas_de_cote_au_relais()
+    {
+        // Le premier disque arrive sur la platine 1 ; le second entre sur la 2 et, une fois
+        // le premier retire, il joue toujours sur la 2. C'est ce que le rendu attend pour
+        // ne pas voir une scene sauter de cote a la fin d'un fondu.
+        var an = new SpectrumAnalyzer(Rate) { Role = RoleAnalyseur.Master };
+        static SpectrumAnalyzer.EmpreinteDisque Disque(int k) => new(
+            EmpreinteFabriquee(k, 0f),
+            Enumerable.Range(0, k + 1).Select(_ => new float[MotifSources.Cases]).ToArray(),
+            new float[k + 1], new int[k + 1], new float[k + 1], new bool[k + 1], new float[k + 1],
+            new (float, float, int)[k + 1], 90f, null);
+        an.Accueillir(Disque(2));
+        Assert.Equal(1, an.PlatineJoue);
+        Assert.Equal(1, an.PlatineEntre);
+        an.Retirer();
+        Assert.Equal(1, an.PlatineJoue);
+        Assert.Equal(0, an.PlatineEntre);
+        an.Accueillir(Disque(3));
+        Assert.Equal(1, an.PlatineJoue);
+        Assert.Equal(2, an.PlatineEntre);
+        an.Retirer();
+        Assert.Equal(2, an.PlatineJoue);
+        Assert.Equal(0, an.PlatineEntre);
+        Assert.Equal(3, an.Separation.Actives);
     }
 
     private static SourceSeparator.Empreinte EmpreinteFabriquee(int k, float cents)

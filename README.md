@@ -150,7 +150,7 @@ lequel l'apprentissage échoue.
 |---|---|
 | ≥ 0,15 | **accueil** : l'empreinte du disque qui entre — gabarits, positions, accordage, motifs, caractères, crêtes, étendues, tempo, fiche — rejoint celle du disque qui joue. Le suivi porte **les deux jeux de gabarits dans une seule passe** : sur chaque image, ce qui est à A et ce qui est à B. Chaque case publiée porte son disque (bits 4–5 du drapeau : 0 celui qui joue, 1 celui qui entre, 2 le reste partagé) |
 | ≥ 0,5 | le tempo, comme avant |
-| ≥ 0,9 | **retrait** : le disque qui sortait quitte le suivi, celui qui est entré devient le disque qui joue (ses cases passent à 0), et le cue se remet à zéro pour le suivant |
+| ≥ 0,9 | **retrait** : le disque qui sortait quitte le suivi, celui qui est entré devient le disque qui joue **sans changer de platine**, et le cue se remet à zéro pour le suivant |
 
 Huit cases partagées, au plus **quatre gabarits par disque** pendant le fondu (les plus
 entendus), et **un seul reste** : un résidu porte les deux batteries et ne se signe pas. Les
@@ -171,9 +171,21 @@ Demucs de A et de B, pesés par le fader.
 
 La basse de Dead Internet reste à 0,73 avec `bass` de A pendant que la nappe de Glyph
 Chamber monte à 0,86 avec `other` de B : **le tchak côté A et la basse côté B, en même
-temps.** Ce qui n'est pas encore mesuré : la variance que le master publie — le pitch
-(octet 121, tempo mesuré rapporté au tempo appris) et les niveaux rapportés aux crêtes du
-cue — sur un vrai fader poussé.
+temps.** Le pitch (octet 121, tempo mesuré rapporté au tempo appris) vaut 0,0 % avant le
+fondu et −0,5 % après, faders immobiles ; ce qui n'est pas encore mesuré, c'est un vrai fader
+poussé, et l'EQ.
+
+**Pourquoi une platine et pas « celui qui joue ».** Le rôle change de sens au retrait : un
+rendu qui aurait mis le disque entrant à droite le verrait sauter à gauche. L'identité de
+platine, 1 ou 2, ne bouge pas tant que le disque tourne ; le rendu compose **une scène par
+platine** et lit à l'octet 60 de quel côté va le fader. Le GPU ne fabrique donc plus deux
+images qu'il mélangerait : il reçoit des cases déjà séparées et signées, et le fondu visuel
+vient tout seul, les cases de la platine qui sort baissant avec son fader.
+
+**Et le rendu se construit sans table.** `outils/relais.py` enregistre les paquets du
+mélange (`paquets=`, les 256 octets bout à bout) ; `./outils/fondu.sh A B` les rejoue dans
+l'anneau partagé à leur cadence (`probe rejoue`) et ouvre la fenêtre. Un vrai fondu, à
+l'identique, autant de fois qu'il faut.
 
 **Et le verrou a deux vitesses.** « Après deux ou trois boom-tchak on a déjà l'info sur le
 BPM, et le boom-tchak ne va pas changer. » Le motif du reste tenu sur quatre mesures

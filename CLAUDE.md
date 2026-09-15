@@ -2292,7 +2292,8 @@ fade. » Décision : **huit cases partagées**, quatre par disque au plus, un re
 | `AdopterPortrait`, `AccueillirPortrait`, `RetirerDisque`, `Compacter` → `Relais(AncienRang, RangEntrant, Actives)` | le suivi joint : les gabarits de B s'ajoutent à ceux de A (`_disque` par ligne, `DisqueOrdonne`, `EnFondu`) ; A est réduit aux plus entendus si la place manque ; le retrait compacte et retague 1 → 0. Les positions de B sont décalées de (cents_B − cents_A)/50 cases ; les gabarits ne bougent pas, ils glissent. |
 | `SpectrumAnalyzer.EmpreinteDisque`, `Empreinte()`, `Accueillir()`, `Retirer()`, `Deplacer()` | l'état par rang suit le relais : `MotifSources`, `SourceEnvelope`, `ContourRange` ont `Exporter/Importer/Vider/Reorganiser` ; les crêtes aussi. Le reste garde le sien pendant le fondu et prend celui du disque entrant au retrait. |
 | `DualAudioSource` | accueil à 0,15 de fondu, tempo à 0,5, retrait à 0,9 (+ `NewTrack()` du cue), `Phase` pour le journal ; les rôles sont posés dans le constructeur |
-| paquet | `Sources = 8`, `SourceCount = 8` ; drapeau bits 4–5 = disque (`SourceDisqueShift`) ; octet 121 = pitch signé en quarts de % ; motifs 6–7 à 122/124, caractères 3 à 126, degrés 3 à 127 ; octet 255 = bit 0 verrou sonorités, bit 1 verrou rythme |
+| paquet | `Sources = 8`, `SourceCount = 8` ; drapeau bits 4–5 = **platine** (`SourcePlatineShift` : 1 ou 2, 3 partagé, 0 inconnu — pas « joue/entre », qui change de sens au retrait et ferait sauter une scène de côté) ; octet 60 = `Relais` (bits 0–1 platine qui joue, bit 2 fondu en cours, bits 4–5 platine qui entre) ; octet 121 = pitch signé en quarts de % ; motifs 6–7 à 122/124, caractères 3 à 126, degrés 3 à 127 ; octet 255 = bit 0 verrou sonorités, bit 1 verrou rythme. `SpectrumAnalyzer.PlatineJoue/PlatineEntre` : le premier disque arrive sur la platine 1, les suivants alternent, le retrait garde la platine |
+| enregistrer et rejouer | sonde `paquets=<f.pak>` (les paquets bout à bout, `TrackContext.Silence`) et `probe rejoue <f.pak> [vitesse]` (écrit dans l'anneau à la cadence des `TimeMs`) ; `outils/fondu.sh A B` fabrique le fondu si besoin et ouvre la fenêtre dessus. C'est la matière du rendu tant qu'il n'y a pas de table. |
 | `MotifSources.VerrouRythme` (4 mesures), `SpectrumAnalyzer.RythmeSu` | le verrou à deux vitesses : le rythme resserre `TempoTracker.Preferer` autour du BPM mesuré |
 | `fenetre.py` | huit cases (4 × 2), étiquette A / B / A+B dans le titre pendant un fondu, lit les nouveaux octets |
 | sonde `relaisA= relaisB= fondu=t0,t1`, `outils/relais.py` | la mesure : cue A, cue B, master sur le mélange ; juge = stems Demucs des deux disques pesés par le fader, par tranche (A seul / fondu / B seul) |
@@ -2305,6 +2306,15 @@ fabriqués (`RelaisTests`), un master qui adopte suit comme le cue à > 0,9, et 
 tombent à un tiers pendant que celles de B triplent — à la fuite près, mesurée ailleurs à
 0,4 sur du vrai son : c'est pour cela que le test n'exige pas zéro.
 
+**Le paquet était plein, et deux champs se chevauchaient déjà.** En cherchant un octet
+« libre » pour l'état du relais, un compte exact des tailles (les blocs, pas le nombre de
+champs) a donné zéro octet libre et **une collision à 215 : `AccordGamme` écrasait
+`EventSharp`** depuis le commit de la gamme. Les douze bandes étaient douze flottants de 48 à
+95 que **personne ne lisait comme tels** : la fenêtre et l'outil ASCII lisaient douze octets
+depuis toujours, donc l'octet bas d'un flottant. Elles sont maintenant douze octets (48–59),
+l'état du relais est à 60, l'accord de gamme à 61, et 62–95 sont libres pour la suite. Un
+niveau qui pilote un visuel n'a jamais eu besoin de trente-deux bits.
+
 **Pièges traversés.** `Sources` passé de 6 à 8 a cassé un test du paquet qui donnait une
 forme `6 − i` (0 pour la case 6, remplacé par la forme par défaut) ; la stabilité des motifs
 demande quatre mesures (deux paires, deux impaires), donc le verrou rythme est à quatre et
@@ -2312,8 +2322,15 @@ non trois ; un `record Empreinte` et une méthode `Empreinte()` ne cohabitent pa
 existait déjà dans le paquet (la classe de hauteur) → `PitchRelais` ; en zsh, une variable
 non citée ne se découpe pas en arguments.
 
-**Pas fait** : la variance sur un vrai fader (pitch et EQ) n'est pas mesurée ; le reste
-partagé ne distingue pas les deux batteries (le motif de chaque reste, transmis, le pourrait
+**Le pitch, mesuré sur le mélange** (`relais.py`, Dead Internet 91 → Glyph 74, faders
+immobiles) : 0,0 % avant, −0,2 % en début de fondu, −0,5 % après. Deux pièges corrigés pour
+y arriver : `AdoptTempo` recentre maintenant la préférence sur le tempo adopté (sinon le verrou
+rythme la laissait autour de 91 et le suivi retombait à 97, le triolet de 74 : +31 % publiés
+sur un fader immobile) ; et la référence du pitch bascule sur le disque entrant à la mi-fondu,
+quand son tempo est adopté (sinon −19 % pendant dix secondes).
+
+**Pas fait** : le pitch et l'EQ sur un vrai fader poussé ne sont pas mesurés, faute de table ;
+le reste partagé ne distingue pas les deux batteries (le motif de chaque reste, transmis, le pourrait
 côté rendu) ; en Master sans cue passé, aucune source n'est publiée tant qu'aucun portrait
 n'est arrivé — c'est voulu.
 

@@ -76,7 +76,7 @@ MAGIC = 0x454D5230  # « EMR0 »
 P_SEQUENCE, P_TEMPS = 4, 8
 P_NIVEAU, P_BPM, P_PHASE = 16, 20, 24
 P_FRAPPES = 40
-P_BANDES = 48          # douze octets
+P_BANDES = 48          # douze octets (0 a 255) — ils etaient douze flottants cote moteur, et on lisait l'octet bas
 P_CENTROIDE, P_OUVERTURE, P_DENSITE = 100, 101, 102
 P_BEAT = 103
 P_PHASE_TEMPS = 117    # position dans le temps, toujours remplie
@@ -110,7 +110,7 @@ P_RETRAITS = 232
 P_SOURCES_ACTIVES = 120
 P_CARACTERES = 201     # un quartet par source : 0 frappe, 15 tient, mesure sur la duree
 P_DEGRES = 209         # un quartet par source : le degre joue dans la gamme de la fiche, 7 hors gamme, 15 inconnu
-P_ACCORD_GAMME = 215   # l'accord du chromagramme avec la gamme de la fiche, 0 a 255
+P_ACCORD_GAMME = 61    # l'accord du chromagramme avec la gamme de la fiche, 0 a 255
 DEGRES = ["I", "II", "III", "IV", "V", "VI", "VII", "·"]
 P_MOTIFS = 243         # six mots de seize bits : le motif de chaque source, une case par double croche
 P_VERROU = 255         # bit 0 : les sonorites sont sues ; bit 1 : le rythme est su (le verrou rapide, celui du boom-tchak)
@@ -118,7 +118,8 @@ P_PITCH = 121          # le tempo mesure au master rapporte a celui appris au cu
 P_MOTIFS_6 = 122       # les motifs des sources 6 et 7, deux mots de seize bits
 P_CARACTERES_3 = 126   # caracteres des sources 6 et 7, un quartet chacune
 P_DEGRES_3 = 127       # degres des sources 6 et 7
-S_DISQUE_DECALAGE = 4  # bits 4 et 5 des drapeaux d'une source : 0 le disque qui joue, 1 celui qui entre, 2 le reste partage
+S_PLATINE_DECALAGE = 4 # bits 4 et 5 des drapeaux d'une source : la platine, 1 ou 2 ; 3 le reste partage ; 0 inconnu
+P_RELAIS = 60         # bits 0-1 la platine qui joue, bit 2 fondu en cours, bits 4-5 la platine qui entre
 
 # Ce qui se repete, et tous les combien. Trois octets : periode en mesures, certitude,
 # bande. Une periode nulle veut dire « on ne sait pas », et c'est une reponse.
@@ -276,6 +277,12 @@ class Paquet:
         # LE PITCH : la seule chose que le master cherche encore une fois les regles recues.
         pitch = mm[base + P_PITCH]
         self.pitch = 1.0 + (pitch - 256 if pitch > 127 else pitch) / 400.0
+        # LE RELAIS : quelle platine joue, laquelle entre. L'identite d'une platine ne saute
+        # pas de cote quand le fondu se termine, c'est tout l'interet.
+        relais = mm[base + P_RELAIS]
+        self.platine_joue = relais & 3
+        self.fondu_en_cours = bool(relais & 4)
+        self.platine_entre = relais >> 4 & 3
         self.accord_gamme = mm[base + P_ACCORD_GAMME] / 255.0
         self.sources = []
         # HUIT CASES, PARTAGEES ENTRE LE DISQUE QUI JOUE ET CELUI QUI ENTRE. Les six
@@ -293,9 +300,9 @@ class Paquet:
                 # LA DOMINANCE : la part de la source qui est vraiment a elle (8 crans). Le
                 # reste est discret, partage — et se dessine dans une autre couleur.
                 "dominance": (mm[o + S_DRAPEAUX] >> 1 & 7) / 7.0,
-                # LE DISQUE : 0 celui qui joue, 1 celui qui entre, 2 le reste partage pendant
-                # un fondu. C'est ce qui fait suivre l'image au fader.
-                "disque": mm[o + S_DRAPEAUX] >> S_DISQUE_DECALAGE & 3,
+                # LA PLATINE : 1 ou 2, l'identite du disque tant qu'il tourne ; 3 le reste
+                # partage pendant un fondu. C'est ce qui fait suivre l'image au fader.
+                "platine": mm[o + S_DRAPEAUX] >> S_PLATINE_DECALAGE & 3,
                 "nettete": mm[o + S_NETTETE] / 255.0,
                 "entendu": mm[o + S_ENTENDU] / 255.0,
                 "nom": mm[o + S_NOM],
@@ -1025,10 +1032,10 @@ class Mur(QWidget):
                       "tenu" if s["caractere"] > 0.8 else
                       "pincé")
             gauche = f"{r + 1}·{s['nom']}" if s["nom"] else f"{r + 1}"
-            # LE DISQUE, quand deux sont suivis : A celui qui joue, B celui qui entre, A+B le
-            # reste partage. Rien n'est ecrit hors fondu, il n'y a alors qu'un disque.
-            if any(x["disque"] for x in p.sources[:max(1, p.actives)]):
-                gauche += ("  A", "  B", "  A+B")[min(2, s["disque"])]
+            # LA PLATINE, pendant un fondu : P1 ou P2, P1+P2 pour le reste partage. Rien
+            # n'est ecrit hors fondu, il n'y a alors qu'un disque.
+            if p.fondu_en_cours:
+                gauche += ("", "  P1", "  P2", "  P1+P2")[s["platine"]]
             # LE DEGRE JOUE, quand la fiche donne la gamme : I la tonique, V la quinte, · hors
             # gamme. C'est ce qui survit a une transition Camelot.
             degre = DEGRES[s["degre"]] if s["degre"] < len(DEGRES) else ""

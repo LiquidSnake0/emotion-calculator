@@ -16,7 +16,35 @@ if (args.Length < 1)
     Console.Error.WriteLine("usage: probe <fichier.wav> [debut_s] [duree_s] [options...]");
     Console.Error.WriteLine("options : sep · inline · complexe · lisse · brutmed · median");
     Console.Error.WriteLine("          memoire · poids=X · marge=X · export=<fichier.json>");
+    Console.Error.WriteLine("          relaisA=<A.wav> relaisB=<B.wav> fondu=<t0>,<t1> · paquets=<fichier.pak>");
+    Console.Error.WriteLine("       probe rejoue <fichier.pak> [vitesse]   — rejoue les paquets dans l'anneau partage");
     return 1;
+}
+
+// LE REJEU : « probe rejoue <fichier.pak> ». Les paquets enregistres par « paquets= » sont
+// ecrits dans l'anneau partage a leur cadence d'origine, sans serveur ni carte son. C'est
+// ce qui permet de construire le rendu sur un vrai fondu enregistre — le DJ n'a pas encore
+// de table — et de le rejouer a l'identique autant de fois qu'il faut.
+if (args[0] == "rejoue")
+{
+    if (args.Length < 2) { Console.Error.WriteLine("probe rejoue <fichier.pak> [vitesse]"); return 1; }
+    var vitesse = args.Length > 2 ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 1.0;
+    var octets = File.ReadAllBytes(args[1]);
+    var n = octets.Length / GpuPacket.Size;
+    if (n == 0) { Console.Error.WriteLine("fichier vide"); return 1; }
+    using var anneau = new SharedRingWriter();
+    Console.WriteLine($"{n} paquets, {(n / 47.0):F0} s environ, vers {anneau.Path} (Ctrl-C arrete)");
+    var depart = System.Diagnostics.Stopwatch.StartNew();
+    long t0 = System.Runtime.InteropServices.MemoryMarshal.Read<GpuPacket>(octets.AsSpan(0, GpuPacket.Size)).TimeMs;
+    for (var i = 0; i < n; i++)
+    {
+        var p = System.Runtime.InteropServices.MemoryMarshal.Read<GpuPacket>(octets.AsSpan(i * GpuPacket.Size, GpuPacket.Size));
+        var du = (p.TimeMs - t0) / vitesse - depart.Elapsed.TotalMilliseconds;
+        if (du > 1) Thread.Sleep((int)du);
+        anneau.Write(in p);
+    }
+    Console.WriteLine("fin du rejeu");
+    return 0;
 }
 
 var path = args[0];
@@ -105,6 +133,7 @@ if (relaisA is not null && relaisB is not null)
     analyzer.Role = RoleAnalyseur.Master;
     analyzer.Accueillir(empreinteA);
     analyzer.Retirer();
+    if (empreinteA.Bpm > 0f) analyzer.AdoptTempo(empreinteA.Bpm, 0);
     Console.WriteLine($"master : suit A ({analyzer.Separation.Actives} gabarits), accueil de B a {fonduT0:F0} s, retrait de A a {fonduT1:F0} s");
 }
 
@@ -270,6 +299,9 @@ var chromaImages = 0;
 IReadOnlyList<ProfileLearner.Bilan> bilansVus = [];
 using var journalSources = args.FirstOrDefault(a => a.StartsWith("sources="))?[8..] is { } fichierSources
     ? new StreamWriter(fichierSources) : null;
+using var fichierPaquets = args.FirstOrDefault(a => a.StartsWith("paquets="))?[8..] is { } cheminPaquets
+    ? new FileStream(cheminPaquets, FileMode.Create, FileAccess.Write) : null;
+var numeroPaquet = 0;
 var syncErr = new List<float>();
 var offsets = new List<float>();
 var gridMs = new List<float>();
@@ -361,13 +393,24 @@ for (var i = 0; i + hop <= mono.Length; i += hop)
     {
         if (relaisFait == 0 && tMs >= fonduT0 * 1000) { analyzer.Accueillir(empreinteB); relaisFait = 1;
             Console.WriteLine($"   t={tMs / 1000.0,6:F1} s  accueil de B : {analyzer.Separation.Actives} gabarits suivis, reste partage"); }
-        if (relaisFait == 1 && tMs >= fonduT1 * 1000) { analyzer.Retirer(); relaisFait = 2;
+        if (relaisFait == 1 && empreinteB.Bpm > 0f && tMs >= (fonduT0 + fonduT1) * 500) { analyzer.AdoptTempo(empreinteB.Bpm, tMs); relaisFait = 3; }
+        if (relaisFait is 1 or 3 && tMs >= fonduT1 * 1000) { analyzer.Retirer(); relaisFait = 2;
             Console.WriteLine($"   t={tMs / 1000.0,6:F1} s  retrait de A : {analyzer.Separation.Actives} gabarits suivis"); }
     }
 
     chronoImage.Restart();
     var f = analyzer.Analyze(mono.AsSpan(i, hop), tMs);
     coutImage.Add(chronoImage.Elapsed.TotalMilliseconds);
+
+    // « paquets=<fichier.pak> » : chaque image, telle que le rendu la recevrait — les 256
+    // octets de GpuPacket, bout a bout. A rejouer avec « probe rejoue ».
+    if (fichierPaquets is not null)
+    {
+        var paquet = GpuPacket.From(in f, TrackContext.Silence, (uint)++numeroPaquet);
+        var brut = System.Runtime.InteropServices.MemoryMarshal.AsBytes(
+            System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(ref paquet, 1));
+        fichierPaquets.Write(brut);
+    }
 
     // A quel instant chaque source devient assez sure d'elle pour qu'un nom tienne. Les
     // six ne s'attendent pas : c'est tout l'interet de les faire murir separement.
@@ -391,13 +434,13 @@ for (var i = 0; i + hop <= mono.Length; i += hop)
         for (var r = 0; r < f.Voices.Actives; r++)
         {
             var l = f.Voices.LaneAt(r);
-            // Cinq colonnes par case : niveau, frappe, pique, tenue, et LE DISQUE (0 celui
-            // qui joue, 1 celui qui entre, 2 le reste partage) — c'est ce que le relais publie.
+            // Cinq colonnes par case : niveau, frappe, pique, tenue, et LA PLATINE (1 ou 2,
+            // 3 le reste partage) — c'est ce que le relais publie.
             ligne.Append('\t').Append(l.Level.ToString("F3", System.Globalization.CultureInfo.InvariantCulture))
                  .Append('\t').Append(l.Hit ? '1' : '0')
                  .Append('\t').Append(l.Pique.ToString("F3", System.Globalization.CultureInfo.InvariantCulture))
                  .Append('\t').Append(l.Tenue.ToString("F3", System.Globalization.CultureInfo.InvariantCulture))
-                 .Append('\t').Append(l.Disque);
+                 .Append('\t').Append(l.Platine);
         }
         journalSources.WriteLine(ligne.ToString());
     }
