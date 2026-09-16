@@ -558,6 +558,14 @@ class Mur(QWidget):
         self.mesure_pos = 0.0
         self.phase_temps_prec = None
 
+        # L'OUVERTURE DE CHAQUE SCENE, ET CE QU'ON VOIT DE SON FADER. Deux grandeurs
+        # lissees a la cadence de l'ecran : la premiere ouvre et ferme la scene d'une
+        # platine sans saut quand un disque entre ou sort ; la seconde est la somme des
+        # niveaux de ses cases, qui suit le fader (mesure : 0,71 a 0,85 de correlation).
+        self.ouverture = {1: 1.0, 2: 0.0}
+        self.somme_vue = {1: 0.0, 2: 0.0}
+        self.cases = [(-1.0, -1.0, 0.0, 0.0)] * 8
+
         # UNE SOURCE ABSENTE NE DISPARAIT PAS DE L'ECRAN, ELLE S'Y MONTRE ETEINTE.
         #
         # « Quand le kick est en retrait pendant un moment, on est censé le savoir. » Une
@@ -783,6 +791,35 @@ class Mur(QWidget):
             imp.pas(dt, chute=0.7 + 8.0 * (1.0 - tenue))
         for r, g in enumerate(self.gestes):
             g.pas(dt, src[r]["niveau"] if src else 0.0)
+
+        # LES SCENES S'OUVRENT ET SE FERMENT EN GRANDEUR LISSEE. La cible vient du relais
+        # (qui joue, qui entre) et des tags des cases ; un paquet sans relais — un moteur
+        # d'avant, le tout debut — laisse la platine 1 seule ouverte.
+        if self.paquet is not None:
+            pq = self.paquet
+            presentes = set()
+            if pq.platine_joue in (1, 2):
+                presentes.add(pq.platine_joue)
+            if pq.fondu_en_cours and pq.platine_entre in (1, 2):
+                presentes.add(pq.platine_entre)
+            sommes = {1: 0.0, 2: 0.0}
+            for r in range(min(pq.actives, 8)):
+                tag = pq.sources[r]["platine"]
+                if tag in (1, 2):
+                    presentes.add(tag)
+                    sommes[tag] += pq.sources[r]["niveau"]
+            if not presentes:
+                presentes.add(1)
+            for k in (1, 2):
+                cible = 1.0 if k in presentes else 0.0
+                self.ouverture[k] += (cible - self.ouverture[k]) * min(1.0, dt * 2.5)
+                if abs(self.ouverture[k] - cible) < 0.004:
+                    self.ouverture[k] = cible
+                # UN NIVEAU MOYEN PAR CASE VIVANTE, pas une somme brute : deux disques
+                # n'ont pas le meme nombre de cases, et la barre doit se lire pareil.
+                n = sum(1 for r in range(min(pq.actives, 8)) if pq.sources[r]["platine"] == k)
+                v = sommes[k] / n if n else 0.0
+                self.somme_vue[k] += (v - self.somme_vue[k]) * min(1.0, dt * 6.0)
         self.update()
 
     # ------------------------------------------------------------------ dessin
@@ -990,114 +1027,236 @@ class Mur(QWidget):
         return y + 16
 
     def registres(self, d, p, x, y, largeur):
-        """Les six sources, chacune dans sa case, avec sa forme.
+        """UNE SCENE PAR PLATINE, composee des cases signees. Le rendu ne recoit pas deux
+        images, il recoit huit cases dont chacune dit a quelle platine elle appartient, et
+        c'est lui qui compose : tout ce qui est P1 a gauche, tout ce qui est P2 a droite, le
+        reste partage a cheval sur la frontiere. Hors fondu, la platine qui joue prend toute
+        la largeur ; quand l'autre entre, la scene qui joue se resserre pendant que la
+        nouvelle s'ouvre, et au retrait la scene qui sort se ferme sans que rien ne saute de
+        cote : P1 est toujours a gauche de P2, quelle que soit celle qui joue.
 
-        Le rang ne decide pas de la forme : le paquet porte un octet par source et c'est lui
-        qui commande. L'ordre du grave a l'aigu n'est qu'un repli quand la fiche n'a rien dit.
+        L'ouverture de chaque scene est une grandeur lissee (`battre`), pas un etat : un
+        cadre qui passerait de zero a la moitie de l'ecran en une image serait exactement le
+        saut que le curseur de mesure a appris a ne plus faire.
         """
-        # QUATRE COLONNES SUR DEUX RANGS : huit cases, celles des deux disques pendant le fondu.
-        cols, rangs = 4, 2
-        larg = (largeur - 3 * 14) / cols
-        haut = 132
-        self.cases = []
-        for r, s in enumerate(p.sources):
-            cx = x + (r % cols) * (larg + 14)
-            cy = y + (r // cols) * (haut + 12)
-            self.cases.append((cx, cy, larg, haut))
+        G = 14
+        o1, o2 = self.ouverture[1], self.ouverture[2]
+        if o1 + o2 < 1e-3:
+            o1 = 1.0
+        deux = min(o1, o2) > 0.02
+        dispo = largeur - (G if deux else 0)
+        w1 = dispo * o1 / (o1 + o2)
+        w2 = dispo - w1
+        scenes = {1: (x, w1), 2: (x + w1 + (G if deux else 0), w2)}
 
-            # ISOLER, C'EST ETEINDRE LES AUTRES — PAS LES EFFACER.
-            #
-            # Elles gardent leur place et leur mouvement, en sourdine : on veut pouvoir
-            # verifier du coin de l'oeil qu'une voisine ne fait pas exactement la meme chose
-            # que celle qu'on ecoute. C'est meme la question du moment, puisque deux sources
-            # sur six portent presque le meme son.
-            eteinte = self.isolee is not None and r != self.isolee
-            choisie = self.isolee == r
+        haut = 124
+        rangs, cols = 2, 4
+        y_grille = y + 18
+        self.cases = [(-1.0, -1.0, 0.0, 0.0)] * 8
 
-            d.setPen(QPen(VERT if choisie else GRIS_CADRE, 1))
-            d.drawRect(int(cx), int(cy), int(larg), haut)
-            self.dessiner_motif(d, s["motif"], cx, cy, larg, haut, eteinte)
-
-            nom = formes.NOMS.get(s["forme"], formes.NOMS[(r % 6) + 1])
-            d.setPen(GRIS_TEXTE)
-            # DIRE LA NATURE DE LA SOURCE, PUISQUE C'EST ELLE QUI COMMANDE LE GESTE. Sans
-            # cela, on voit un mouvement sans savoir s'il decrit un instrument qui frappe ou
-            # un qui souffle — et un ecran qui montre autre chose que ce qui decide est pire
-            # qu'aucun ecran.
-            # LE CARACTERE VIENT DU MOTEUR, SUR LA DUREE — plus d'une lecture de l'image :
-            # une nappe qui monte une fois n'est pas « frappee », un kick entre deux coups
-            # n'est pas « tenu ». Mesure : la batterie sous 0,4, les nappes au-dessus de 0,8,
-            # le pince entre les deux.
-            nature = ("frappé" if s["caractere"] < 0.45 else
-                      "tenu" if s["caractere"] > 0.8 else
-                      "pincé")
-            gauche = f"{r + 1}·{s['nom']}" if s["nom"] else f"{r + 1}"
-            # LA PLATINE, pendant un fondu : P1 ou P2, P1+P2 pour le reste partage. Rien
-            # n'est ecrit hors fondu, il n'y a alors qu'un disque.
-            if p.fondu_en_cours:
-                gauche += ("", "  P1", "  P2", "  P1+P2")[s["platine"]]
-            # LE DEGRE JOUE, quand la fiche donne la gamme : I la tonique, V la quinte, · hors
-            # gamme. C'est ce qui survit a une transition Camelot.
-            degre = DEGRES[s["degre"]] if s["degre"] < len(DEGRES) else ""
-            titre = "  ".join(x for x in (gauche, nom, nature, degre) if x)
-
-            # UNE SOURCE RETIREE SE DIT, ELLE NE DISPARAIT PAS.
-            # « Quand le kick est en retrait pendant un moment, on est censé le savoir. »
-            # « ABSENT 0 S » NE VEUT RIEN DIRE, et c'est ce que l'arrondi affichait pour un
-            # retrait de quatre dixièmes. Un retrait se compte en mesures — deux, avant
-            # qu'on en parle — donc on ne l'annonce qu'une fois qu'il en vaut la peine, et
-            # on l'arrondit à la seconde par le haut.
-            absente = s["retrait"] > 0.4
-            if absente:
-                titre += f"  ⌁ absent {max(1, math.ceil(s['retrait']))} s"
-
-            d.setPen(GRIS_CADRE if (absente or eteinte) else
-                     GRIS_CLAIR if choisie else GRIS_TEXTE)
-            d.drawText(int(cx) + 8, int(cy) + 16, titre)
-            # LE TITRE PORTE LA MATURITE DE LA SOURCE, EN QUATRE CRANS.
-            #
-            # Tant que la source n'a pas ete assez entendue, on n'annonce rien : ce qui joue
-            # dans une bande change d'un disque a l'autre, et annoncer un piano la ou passe
-            # un saxophone est pire que de se taire. Une fois assez ecoutee, le verdict dit
-            # si elle est seule dans son registre ou si plusieurs instruments s'y relaient.
-            if s["entendu"] < 0.99:
-                verdict, vif = "…", False
-            elif s["nettete"] > 0.6:
-                verdict, vif = "● nette", True
-            elif s["nettete"] > 0.3:
-                verdict, vif = "◐ mêlée", False
+        # A QUELLE SCENE VA CHAQUE CASE. Le tag vient du moteur ; une case sans tag (un
+        # moteur d'avant le relais, ou le tout debut d'un disque) va dans la scene ouverte.
+        ouverte = 1 if o1 >= o2 else 2
+        par_scene = {1: [], 2: []}
+        partagees = []
+        for r in range(min(p.actives, 8)):
+            tag = p.sources[r]["platine"]
+            if tag == 3:
+                partagees.append(r)
+            elif tag in (1, 2):
+                par_scene[tag].append(r)
             else:
-                verdict, vif = "○ partagée", False
-            # SUR LA CASE ISOLEE, LE COMPTE DES MARQUES PREND LA PLACE DU VERDICT.
-            #
-            # La place est deja reservee, donc rien ne bouge dans la geometrie — et pendant
-            # qu'on annote, savoir que la touche est bien prise compte plus que de relire
-            # « nette ». C'est le SEUL retour a l'ecran : on n'affiche aucun accord calcule,
-            # parce que le trancher tout de suite obligerait a decider de la latence de la
-            # main, qui n'est pas connue.
-            if choisie:
-                n = sum(1 for m in self.marques if m[0] == r)
-                verdict = "tenue" if self.tenue else f"marques {n}"
-                vif = True
+                par_scene[ouverte].append(r)
 
-            # ET LA POSITION SE MESURE, ELLE NE SE DEVINE PAS. Le decalage de 72 px etait
-            # taille pour « ○ partagée » ; « marques 12 » est plus long et touchait le bord
-            # de la case. C'est la QUATRIEME fois dans ce fichier qu'une largeur supposee
-            # coute un debordement — on la mesure, comme partout ailleurs.
-            d.setPen(GRIS_CADRE if eteinte else (GRIS_CLAIR if vif else GRIS_CADRE))
-            large = QFontMetricsF(self.mono).horizontalAdvance(verdict)
-            d.drawText(int(cx + larg - FADER_LARGE - 10 - large), int(cy) + 16, verdict)
+        largeurs_case = {}
+        for k, (sx, sw) in scenes.items():
+            if sw < 2.0:
+                continue
+            larg = (sw - (cols - 1) * G) / cols
+            largeurs_case[k] = larg
+            self.etiquette_scene(d, p, k, sx, y, sw)
+            visible = larg > 40
+            # LA GRILLE DE LECTURE, meme vide : l'oeil s'y ancre pour comparer une case a sa
+            # voisine, et une grille qui apparait avec sa premiere case n'ancre rien.
+            for i in range(rangs * cols):
+                cx = sx + (i % cols) * (larg + G)
+                cy = y_grille + (i // cols) * (haut + 12)
+                d.setPen(QPen(QColor(34, 36, 38), 1))
+                d.drawRect(int(cx), int(cy), int(larg), haut)
+            if not visible:
+                continue
+            for i, r in enumerate(par_scene[k][:rangs * cols]):
+                cx = sx + (i % cols) * (larg + G)
+                cy = y_grille + (i // cols) * (haut + 12)
+                self.cases[r] = (cx, cy, larg, haut)
+                self.dessiner_case(d, p, r, p.sources[r], cx, cy, larg, haut)
 
-            # LA TAILLE SE DONNE EN PIXELS, PAS EN POINTS. setPointSizeF prend des
-            # points ; a 96 points par pouce un point vaut 1,33 pixel, donc une taille
-            # calculee en pixels et passee la sortait un tiers trop grande — et chaque
-            # ligne debordait d'autant. C'est ce qui faisait se chevaucher les cases.
-            utile = larg - FADER_LARGE - 8
-            self.dessiner_geste(d, r, s, cx, cy, utile, haut, absente, eteinte,
-                                reste=(r == p.actives - 1))
+        # LE RESTE PARTAGE, a cheval sur la frontiere : il appartient aux deux, il se
+        # dessine entre les deux. Une seule scene ouverte : il rejoint sa grille.
+        for j, r in enumerate(partagees):
+            if deux and 1 in largeurs_case and 2 in largeurs_case:
+                larg = (largeurs_case[1] + largeurs_case[2]) / 2
+                frontiere = scenes[2][0] - G / 2
+                cx = frontiere - larg / 2
+                cy = y_grille + (haut + 12)
+            else:
+                k = ouverte
+                if k not in largeurs_case:
+                    continue
+                larg = largeurs_case[k]
+                i = len(par_scene[k]) + j
+                if i >= rangs * cols:
+                    continue
+                cx = scenes[k][0] + (i % cols) * (larg + G)
+                cy = y_grille + (i // cols) * (haut + 12)
+            if larg <= 40:
+                continue
+            self.cases[r] = (cx, cy, larg, haut)
+            self.dessiner_case(d, p, r, p.sources[r], cx, cy, larg, haut)
+        return y_grille + rangs * (haut + 12)
 
-            self.dessiner_fader(d, r, cx, cy, larg, haut)
-        return y + rangs * (haut + 12)
+    def etiquette_scene(self, d, p, k, sx, y, sw):
+        """Le nom de la platine, ce qu'elle fait, et ce qu'on voit de son fader.
+
+        LE FADER N'EST PAS DANS LE PAQUET, ET IL N'A PAS A L'ETRE : la somme des cases
+        d'une platine le suit (mesure : 0,71 a 0,85 de correlation pendant le fondu). La
+        barre montre donc ce que le rendu SAIT du fader, pas ce que la table dit — c'est
+        precisement ce qu'on veut verifier a l'oeil.
+        """
+        if p.fondu_en_cours:
+            etat = ("sort" if k == p.platine_joue else
+                    "entre" if k == p.platine_entre else "")
+        else:
+            etat = "joue" if k == p.platine_joue else ""
+        titre = f"P{k}" + (f" · {etat}" if etat else "")
+        if p.fondu_en_cours and k == p.platine_entre and abs(p.pitch - 1.0) > 0.0005:
+            titre += f"   pitch {100 * (p.pitch - 1.0):+.1f} %"
+        d.setPen(GRIS_CLAIR if etat else GRIS_CADRE)
+        d.drawText(int(sx), int(y) + 12, titre)
+        largeur_titre = QFontMetricsF(self.mono).horizontalAdvance(titre + "   ")
+        bx = sx + largeur_titre
+        bw = sw - largeur_titre
+        if bw > 20:
+            d.setPen(QPen(GRIS_CADRE, 1))
+            d.drawLine(int(bx), int(y) + 8, int(bx + bw), int(y) + 8)
+            v = max(0.0, min(1.0, self.somme_vue[k]))
+            d.setPen(QPen(VERT if etat else VERT_SOURD, 3))
+            if v > 0.005:
+                d.drawLine(int(bx), int(y) + 8, int(bx + bw * v), int(y) + 8)
+
+    def dessiner_case(self, d, p, r, s, cx, cy, larg, haut):
+        """Une case : cadre, motif, titre, verdict, geste, fader — la ou la scene la pose."""
+        # ISOLER, C'EST ETEINDRE LES AUTRES — PAS LES EFFACER.
+        #
+        # Elles gardent leur place et leur mouvement, en sourdine : on veut pouvoir
+        # verifier du coin de l'oeil qu'une voisine ne fait pas exactement la meme chose
+        # que celle qu'on ecoute. C'est meme la question du moment, puisque deux sources
+        # sur six portent presque le meme son.
+        eteinte = self.isolee is not None and r != self.isolee
+        choisie = self.isolee == r
+
+        d.setPen(QPen(VERT if choisie else GRIS_CADRE, 1))
+        d.drawRect(int(cx), int(cy), int(larg), haut)
+        self.dessiner_motif(d, s["motif"], cx, cy, larg, haut, eteinte)
+
+        nom = formes.NOMS.get(s["forme"], formes.NOMS[(r % 6) + 1])
+        d.setPen(GRIS_TEXTE)
+        # DIRE LA NATURE DE LA SOURCE, PUISQUE C'EST ELLE QUI COMMANDE LE GESTE. Sans
+        # cela, on voit un mouvement sans savoir s'il decrit un instrument qui frappe ou
+        # un qui souffle — et un ecran qui montre autre chose que ce qui decide est pire
+        # qu'aucun ecran.
+        # LE CARACTERE VIENT DU MOTEUR, SUR LA DUREE — plus d'une lecture de l'image :
+        # une nappe qui monte une fois n'est pas « frappee », un kick entre deux coups
+        # n'est pas « tenu ». Mesure : la batterie sous 0,4, les nappes au-dessus de 0,8,
+        # le pince entre les deux.
+        nature = ("frappé" if s["caractere"] < 0.45 else
+                  "tenu" if s["caractere"] > 0.8 else
+                  "pincé")
+        gauche = f"{r + 1}·{s['nom']}" if s["nom"] else f"{r + 1}"
+        # LA PLATINE SE LIT SUR LA SCENE, plus sur la case. Seul le reste partage le dit
+        # encore, puisqu'il est a cheval sur les deux.
+        if s["platine"] == 3:
+            gauche += "  P1+P2"
+        # LE DEGRE JOUE, quand la fiche donne la gamme : I la tonique, V la quinte, · hors
+        # gamme. C'est ce qui survit a une transition Camelot.
+        degre = DEGRES[s["degre"]] if s["degre"] < len(DEGRES) else ""
+        titre = "  ".join(x for x in (gauche, nom, nature, degre) if x)
+
+        # UNE SOURCE RETIREE SE DIT, ELLE NE DISPARAIT PAS.
+        # « Quand le kick est en retrait pendant un moment, on est censé le savoir. »
+        # « ABSENT 0 S » NE VEUT RIEN DIRE, et c'est ce que l'arrondi affichait pour un
+        # retrait de quatre dixièmes. Un retrait se compte en mesures — deux, avant
+        # qu'on en parle — donc on ne l'annonce qu'une fois qu'il en vaut la peine, et
+        # on l'arrondit à la seconde par le haut.
+        absente = s["retrait"] > 0.4
+        if absente:
+            titre += f"  ⌁ absent {max(1, math.ceil(s['retrait']))} s"
+
+        # LE TITRE PORTE LA MATURITE DE LA SOURCE, EN QUATRE CRANS.
+        #
+        # Tant que la source n'a pas ete assez entendue, on n'annonce rien : ce qui joue
+        # dans une bande change d'un disque a l'autre, et annoncer un piano la ou passe
+        # un saxophone est pire que de se taire. Une fois assez ecoutee, le verdict dit
+        # si elle est seule dans son registre ou si plusieurs instruments s'y relaient.
+        if s["entendu"] < 0.99:
+            verdict, vif = "…", False
+        elif s["nettete"] > 0.6:
+            verdict, vif = "● nette", True
+        elif s["nettete"] > 0.3:
+            verdict, vif = "◐ mêlée", False
+        else:
+            verdict, vif = "○ partagée", False
+        # SUR LA CASE ISOLEE, LE COMPTE DES MARQUES PREND LA PLACE DU VERDICT.
+        #
+        # La place est deja reservee, donc rien ne bouge dans la geometrie — et pendant
+        # qu'on annote, savoir que la touche est bien prise compte plus que de relire
+        # « nette ». C'est le SEUL retour a l'ecran : on n'affiche aucun accord calcule,
+        # parce que le trancher tout de suite obligerait a decider de la latence de la
+        # main, qui n'est pas connue.
+        if choisie:
+            n = sum(1 for m in self.marques if m[0] == r)
+            verdict = "tenue" if self.tenue else f"marques {n}"
+            vif = True
+
+        # ET LA POSITION SE MESURE, ELLE NE SE DEVINE PAS. Le decalage de 72 px etait
+        # taille pour « ○ partagée » ; « marques 12 » est plus long et touchait le bord
+        # de la case. C'est la QUATRIEME fois dans ce fichier qu'une largeur supposee
+        # coute un debordement — on la mesure, comme partout ailleurs.
+        fm = QFontMetricsF(self.mono)
+        large = fm.horizontalAdvance(verdict)
+        x_verdict = cx + larg - FADER_LARGE - 10 - large
+
+        # ET LE TITRE SE COUPE A LA PLACE QUI RESTE AVANT LE VERDICT : pendant un fondu
+        # les cases font la moitie de leur largeur, et un titre qui court sous le verdict
+        # ou sur la case voisine se lit comme le sien. On coupe par la droite, ce qui garde
+        # le rang et, pour le reste partage, la platine.
+        place = x_verdict - (cx + 8) - 8
+        # On lache d'abord les mots de la fin — degre, nature, forme — et le rang avec sa
+        # platine reste entier : « 5 P1 » tronque de « 5 P1+P2 » dirait le contraire de
+        # ce qu'il faut dire.
+        mots = [x for x in (gauche, nom, nature, degre) if x]
+        if absente:
+            mots.append(f"⌁ absent {max(1, math.ceil(s['retrait']))} s")
+        while len(mots) > 1 and fm.horizontalAdvance("  ".join(mots)) > place:
+            mots.pop()
+        titre = "  ".join(mots)
+        while titre and fm.horizontalAdvance(titre) > place:
+            titre = titre[:-1]
+        d.setPen(GRIS_CADRE if (absente or eteinte) else
+                 GRIS_CLAIR if choisie else GRIS_TEXTE)
+        d.drawText(int(cx) + 8, int(cy) + 16, titre)
+        d.setPen(GRIS_CADRE if eteinte else (GRIS_CLAIR if vif else GRIS_CADRE))
+        d.drawText(int(x_verdict), int(cy) + 16, verdict)
+
+        # LA TAILLE SE DONNE EN PIXELS, PAS EN POINTS. setPointSizeF prend des
+        # points ; a 96 points par pouce un point vaut 1,33 pixel, donc une taille
+        # calculee en pixels et passee la sortait un tiers trop grande — et chaque
+        # ligne debordait d'autant. C'est ce qui faisait se chevaucher les cases.
+        utile = larg - FADER_LARGE - 8
+        self.dessiner_geste(d, r, s, cx, cy, utile, haut, absente, eteinte,
+                            reste=(r == p.actives - 1))
+
+        self.dessiner_fader(d, r, cx, cy, larg, haut)
 
     def dessiner_geste(self, d, r, s, cx, cy, utile, haut, absente, eteinte, reste):
         """Le geste de la source, selon ce qu'elle est. Voir <Geste>."""

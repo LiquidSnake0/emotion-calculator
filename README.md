@@ -187,6 +187,40 @@ mélange (`paquets=`, les 256 octets bout à bout) ; `./outils/fondu.sh A B` les
 l'anneau partagé à leur cadence (`probe rejoue`) et ouvre la fenêtre. Un vrai fondu, à
 l'identique, autant de fois qu'il faut.
 
+**Et la fenêtre compose désormais une scène par platine.** Elle ne pose plus les huit cases
+dans une grille fixe : tout ce qui est signé P1 va dans la scène de gauche, tout ce qui est
+P2 dans celle de droite, et le reste partagé se dessine à cheval sur la frontière, puisqu'il
+appartient aux deux. Hors fondu, la platine qui joue prend toute la largeur ; quand l'autre
+entre, sa scène s'ouvre pendant que celle qui joue se resserre, et au retrait la scène qui
+sort se ferme. **P1 est toujours à gauche de P2**, quelle que soit celle qui joue : rien ne
+saute de côté. L'ouverture de chaque scène est une grandeur lissée à la cadence de l'écran
+(0,4 s), pas un état — un cadre qui passerait de zéro à la moitié de l'écran en une image
+serait exactement le saut que le curseur de mesure a appris à ne plus faire. Au-dessus de
+chaque scène, une barre montre ce que le rendu **sait** du fader : le niveau moyen des cases
+de la platine, qui le suit à 0,71–0,85. C'est la spécification du GPU, jouée sur le mock :
+il recevra huit cases signées et composera, il ne mélangera pas deux images.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/fondu-A.png" alt="A seul"><br>
+<sub>A seul : la platine 1 prend toute la largeur.</sub></td>
+<td width="50%"><img src="docs/images/fondu-accueil.png" alt="L'accueil, 0,2 s après"><br>
+<sub>0,2 s après l'accueil : la scène de P2 s'ouvre, le reste passe à cheval.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/images/fondu-mi.png" alt="Mi-fondu"><br>
+<sub>Mi-fondu : deux scènes, deux cases par disque, le reste entre les deux ; la barre de P1 baisse, celle de P2 monte.</sub></td>
+<td><img src="docs/images/fondu-B.png" alt="B seul"><br>
+<sub>B seul : la scène de P1 s'est fermée, P2 est restée à droite.</sub></td>
+</tr>
+</table>
+
+Ces images sortent de `python3 outils/fondu_images.py <fondu.pak> <dossier>` : le fondu
+enregistré est rejoué hors écran, paquet par paquet, et huit instants sont rendus — A seul,
+l'accueil et ses suites, la mi-fondu, le retrait et ses suites, B seul. Sur Dead Internet
+Theory → Glyph Chamber, l'ouverture de P2 passe de 0,05 à 0,42 en 0,2 s et à 0,96 en 1,3 s ;
+au retrait, celle de P1 tombe de 0,95 à 0,52 en 0,25 s, puis à zéro.
+
 **Et le verrou a deux vitesses.** « Après deux ou trois boom-tchak on a déjà l'info sur le
 BPM, et le boom-tchak ne va pas changer. » Le motif du reste tenu sur quatre mesures
 (`MotifSources.VerrouRythme`) resserre la préférence de tempo autour de ce qu'on mesure et

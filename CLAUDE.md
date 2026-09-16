@@ -2295,7 +2295,7 @@ fade. » Décision : **huit cases partagées**, quatre par disque au plus, un re
 | paquet | `Sources = 8`, `SourceCount = 8` ; drapeau bits 4–5 = **platine** (`SourcePlatineShift` : 1 ou 2, 3 partagé, 0 inconnu — pas « joue/entre », qui change de sens au retrait et ferait sauter une scène de côté) ; octet 60 = `Relais` (bits 0–1 platine qui joue, bit 2 fondu en cours, bits 4–5 platine qui entre) ; octet 121 = pitch signé en quarts de % ; motifs 6–7 à 122/124, caractères 3 à 126, degrés 3 à 127 ; octet 255 = bit 0 verrou sonorités, bit 1 verrou rythme. `SpectrumAnalyzer.PlatineJoue/PlatineEntre` : le premier disque arrive sur la platine 1, les suivants alternent, le retrait garde la platine |
 | enregistrer et rejouer | sonde `paquets=<f.pak>` (les paquets bout à bout, `TrackContext.Silence`) et `probe rejoue <f.pak> [vitesse]` (écrit dans l'anneau à la cadence des `TimeMs`) ; `outils/fondu.sh A B` fabrique le fondu si besoin et ouvre la fenêtre dessus. C'est la matière du rendu tant qu'il n'y a pas de table. |
 | `MotifSources.VerrouRythme` (4 mesures), `SpectrumAnalyzer.RythmeSu` | le verrou à deux vitesses : le rythme resserre `TempoTracker.Preferer` autour du BPM mesuré |
-| `fenetre.py` | huit cases (4 × 2), étiquette A / B / A+B dans le titre pendant un fondu, lit les nouveaux octets |
+| `fenetre.py` | **une scène par platine** : les cases signées P1 à gauche, P2 à droite, le reste partagé à cheval sur la frontière ; l'ouverture de chaque scène est lissée (0,4 s), P1 reste toujours à gauche de P2 ; une barre par scène montre le fader tel que le rendu le voit (niveau moyen des cases) ; `outils/fondu_images.py` rend huit instants d'un fondu enregistré hors écran |
 | sonde `relaisA= relaisB= fondu=t0,t1`, `outils/relais.py` | la mesure : cue A, cue B, master sur le mélange ; juge = stems Demucs des deux disques pesés par le fader, par tranche (A seul / fondu / B seul) |
 
 **Mesuré sur deux couples** (WordBank → Echoes, Dead Internet → Glyph) : pendant le fondu,
@@ -2333,6 +2333,16 @@ quand son tempo est adopté (sinon −19 % pendant dix secondes).
 le reste partagé ne distingue pas les deux batteries (le motif de chaque reste, transmis, le pourrait
 côté rendu) ; en Master sans cue passé, aucune source n'est publiée tant qu'aucun portrait
 n'est arrivé — c'est voulu.
+
+**La scène par platine (16 septembre)** est la spécification du GPU jouée sur le mock, et
+elle a fixé deux règles : la composition se fait sur le **tag de platine** des cases, jamais
+sur « joue / entre » (qui changent de sens au retrait) ; et **toute ouverture ou fermeture de
+scène est une grandeur lissée**, pas un état, pour la même raison que le curseur de mesure ne
+saute plus. Deux détails coûtent cher si on les oublie : dans une case à moitié de largeur, le
+titre se coupe à la place que laisse le verdict, en lâchant les mots de la fin et en gardant
+le rang avec sa platine entier (« 5 P1 » tronqué de « 5 P1+P2 » dirait le contraire) ; et
+le harnais de rendu hors écran remplace `time.monotonic` par l'horloge des paquets, sans quoi
+le lissage ne bouge pas entre deux appels.
 
 ## Le contrôle de fumée, et pourquoi il a fallu l'écrire
 
