@@ -216,6 +216,37 @@ il recevra huit cases signées et composera, il ne mélangera pas deux images.
 </tr>
 </table>
 
+**Puis le passage a été refait comme le DJ le fait, et le verdict a changé.** Le fondu
+linéaire de vingt secondes n'est pas un passage vinyle. `outils/relais.py` fabrique désormais
+le geste réel (`docs/mix-vinyle.md`) : les fiches du **crate** donnent le BPM joué et la clé
+transposée, B est calé temps sur temps sur A par la grille vérité et lâché de son « 1 » sur
+le 1 de la mesure 17, les faders et l'EQ bougent sur des 1 de phrase, et les cues ont trois
+minutes de casque (`cue=180` dans la sonde : à 60 s, la croissance des sources n'avait pas
+eu lieu, il manquait une case). Le couple est celui que le crate classe en tête parmi les
+titres qui ont des stems : Codex Sinaiticus ↔ Passepartout, tous deux en 8A.
+
+| niveau moyen des cases, par tranche | A seul | les deux, B sans basses | bass swap | les deux, basses chez B | B seul |
+|---|---|---|---|---|---|
+| Codex → Passepartout, cases de A | 1,10 | **2,34** | **2,51** | **2,47** | 0 |
+| Codex → Passepartout, cases de B | 0 | 0,45 | 0,89 | 1,17 | 1,74 |
+| Passepartout → Codex, cases de A | 1,10 | 1,58 | 1,45 | 1,58 | 0 |
+| Passepartout → Codex, cases de B | 0 | 1,50 | 2,06 | 2,24 | 2,49 |
+
+**Le fader de A ne bouge pas et ses cases doublent dès que B entre.** Sur quarante verdicts
+pendant le chevauchement, vingt-trois pointent le bon disque, contre neuf sur neuf sur le
+fondu linéaire — qui ne testait donc rien, puisque A partait pendant que B arrivait et que
+toute fuite suivait le fader. **Le mix harmonique est le pire cas d'une séparation par
+hauteur** : le crate choisit deux disques dans la même gamme, et des gabarits qui glissent sur
+deux octaves expliquent les notes de B aussi bien que celles de A. Pendant le bass swap, la
+case « basse » de Passepartout suit le bouton LOW à 0,49 mais garde 95 % de son niveau : elle
+prend la basse de Codex qui entre. Le reste partagé, lui, passe de la batterie de A (0,66) à
+celle de B (0,75) : la boule suit le kick le plus fort, sans savoir lequel c'est.
+
+**Et `BlendEstimator` retirerait A trop tôt.** Il mesure la présence de B (`blend=` dans la
+sonde rend ce qu'il devinerait) et sature à 0,9 vers la mesure 31, quand B est à fond sans
+basses et que A joue encore à fond pour vingt-six mesures. La présence de B n'est pas
+l'absence de A. Le retrait doit être piloté par autre chose.
+
 Ces images sortent de `python3 outils/fondu_images.py <fondu.pak> <dossier>` : le fondu
 enregistré est rejoué hors écran, paquet par paquet, et huit instants sont rendus — A seul,
 l'accueil et ses suites, la mi-fondu, le retrait et ses suites, B seul. Sur Dead Internet

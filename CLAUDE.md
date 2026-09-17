@@ -2334,6 +2334,18 @@ le reste partagé ne distingue pas les deux batteries (le motif de chaque reste,
 côté rendu) ; en Master sans cue passé, aucune source n'est publiée tant qu'aucun portrait
 n'est arrivé — c'est voulu.
 
+**Le passage refait comme le DJ le fait (17 septembre)** — `docs/mix-vinyle.md` pour le
+geste, `outils/relais.py` pour le fabriquer (fiches du crate : BPM joué, clé transposée ;
+grille vérité pour caler B sur A ; gestes sur les 1 ; `cue=180` et `blend=`/`fader=` dans la
+sonde). Deux résultats qui changent la suite, mesurés sur Codex ↔ Passepartout (8A tous deux,
+le couple que le crate classe en tête) : **les cases de A doublent quand B entre à fader A
+constant** — en mix harmonique les gabarits glissants de A expliquent les notes de B ; et
+**`BlendEstimator` sature à 0,9 quand B est à fond alors que A joue encore** : il mesure la
+présence de B, pas l'absence de A. Le fondu linéaire de 20 s ne testait rien de tout cela.
+Pistes ouvertes, à trancher avec lui : lire les cases de B **au casque** (le cue continue
+d'analyser B pendant le passage, ses niveaux sont exacts, le master n'a qu'à retrancher
+g·cue) ; piloter le retrait par ce qui reste de A une fois B retranché.
+
 **La scène par platine (16 septembre)** est la spécification du GPU jouée sur le mock, et
 elle a fixé deux règles : la composition se fait sur le **tag de platine** des cases, jamais
 sur « joue / entre » (qui changent de sens au retrait) ; et **toute ouverture ou fermeture de

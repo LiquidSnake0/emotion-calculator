@@ -68,6 +68,9 @@ rang, titre = decoupe(choix)
 
 # LA FICHE SE PREND DANS LE CRATE, jamais devinee. On apparie sur le titre, et sur le rang
 # seulement si l'album est identifie — un numero de piste seul ne designe rien.
+# ET C'EST LE BPM NATIF, A DESSEIN : ici le fichier se joue tel quel, sans pitch. Sur une
+# platine le disque tourne a son BPM joue (`anchorBpm` du crate) et sa cle est transposee
+# (le tag) : c'est CES valeurs-la que le crate devra envoyer a /deck, pas les natives.
 bpm = ""
 cle = ""
 try:

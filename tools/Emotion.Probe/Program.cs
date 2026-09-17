@@ -16,7 +16,8 @@ if (args.Length < 1)
     Console.Error.WriteLine("usage: probe <fichier.wav> [debut_s] [duree_s] [options...]");
     Console.Error.WriteLine("options : sep · inline · complexe · lisse · brutmed · median");
     Console.Error.WriteLine("          memoire · poids=X · marge=X · export=<fichier.json>");
-    Console.Error.WriteLine("          relaisA=<A.wav> relaisB=<B.wav> fondu=<t0>,<t1> · paquets=<fichier.pak>");
+    Console.Error.WriteLine("          relaisA=<A.wav> relaisB=<B.wav> fondu=<t0>,<t1> cue=<s> · paquets=<fichier.pak>");
+    Console.Error.WriteLine("          blend=<cueB aligne.wav> fader=<fichier.tsv>   — le fader tel que BlendEstimator le devine");
     Console.Error.WriteLine("       probe rejoue <fichier.pak> [vitesse]   — rejoue les paquets dans l'anneau partage");
     return 1;
 }
@@ -113,11 +114,16 @@ if (args.FirstOrDefault(a => a.StartsWith("fondu="))?[6..] is { } fonduArg)
 }
 SpectrumAnalyzer.EmpreinteDisque? empreinteB = null;
 var relaisFait = 0;   // 0 rien, 1 B accueilli, 2 A retire
+// « cue=<secondes> » : combien de temps chaque cue ecoute son disque avant le passage. Un DJ
+// cale au casque une a trois minutes ; a 60 s le choix des sources (40 s) est fait mais
+// la croissance (toutes les 20 s) n'a pas eu le temps — il manquait une case.
+var secondesCue = args.FirstOrDefault(a => a.StartsWith("cue="))?[4..] is { } cueArg
+    ? double.Parse(cueArg, System.Globalization.CultureInfo.InvariantCulture) : 60.0;
 if (relaisA is not null && relaisB is not null)
 {
     SpectrumAnalyzer.EmpreinteDisque Apprendre(string fichier)
     {
-        var (son, tx) = Wav.ReadMono(fichier, 0, 60);
+        var (son, tx) = Wav.ReadMono(fichier, 0, secondesCue);
         var cue = new SpectrumAnalyzer(tx, separate, memoireT, inertieT, centrePref, largeurPref) { Role = RoleAnalyseur.Cue };
         cue.Separation.ApprentissageEnLigne = true;
         for (var i = 0; i + SpectrumAnalyzer.Window <= son.Length; i += SpectrumAnalyzer.Window)
@@ -135,6 +141,23 @@ if (relaisA is not null && relaisB is not null)
     analyzer.Retirer();
     if (empreinteA.Bpm > 0f) analyzer.AdoptTempo(empreinteA.Bpm, 0);
     Console.WriteLine($"master : suit A ({analyzer.Separation.Actives} gabarits), accueil de B a {fonduT0:F0} s, retrait de A a {fonduT1:F0} s");
+}
+
+// « blend=<cueB.wav> fader=<fichier.tsv> » : ce que BlendEstimator DEVINERAIT du fader
+// sur ce melange, a partir du cue de B aligne dans le temps (ce que le casque entend, apres
+// EQ, fader a fond). C'est la mesure qui manquait : une coupure de basse sur A ne doit pas
+// passer pour un depart de A.
+float[]? cueBlend = null;
+var analyseurBlend = (SpectrumAnalyzer?)null;
+var estimateurBlend = (BlendEstimator?)null;
+using var journalFader = args.FirstOrDefault(a => a.StartsWith("fader="))?[6..] is { } fichierFader
+    ? new StreamWriter(fichierFader) : null;
+if (args.FirstOrDefault(a => a.StartsWith("blend="))?[6..] is { } fichierBlend)
+{
+    var (sonB, txB) = Wav.ReadMono(fichierBlend, startS, lengthS);
+    cueBlend = sonB;
+    analyseurBlend = new SpectrumAnalyzer(txB, separate, memoireT, inertieT, centrePref, largeurPref) { Role = RoleAnalyseur.Cue };
+    estimateurBlend = new BlendEstimator();
 }
 
 // LES DEUX REGIMES, DANS LE MEME PROCESSUS.
@@ -401,6 +424,14 @@ for (var i = 0; i + hop <= mono.Length; i += hop)
     chronoImage.Restart();
     var f = analyzer.Analyze(mono.AsSpan(i, hop), tMs);
     coutImage.Add(chronoImage.Elapsed.TotalMilliseconds);
+
+    if (analyseurBlend is not null && cueBlend is not null && estimateurBlend is not null && i + hop <= cueBlend.Length)
+    {
+        var fc = analyseurBlend.Analyze(cueBlend.AsSpan(i, hop), tMs);
+        var devine = estimateurBlend.Feed(f.Bands, fc.Bands);
+        journalFader?.WriteLine((tMs / 1000.0).ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
+                                + "\t" + devine.ToString("F4", System.Globalization.CultureInfo.InvariantCulture));
+    }
 
     // « paquets=<fichier.pak> » : chaque image, telle que le rendu la recevrait — les 256
     // octets de GpuPacket, bout a bout. A rejouer avec « probe rejoue ».
