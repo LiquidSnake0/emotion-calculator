@@ -748,6 +748,15 @@ class Mur(QWidget):
         if courant is not None:
             self.paquet = entre(self.entre_images.avant, courant,
                                 self.entre_images.alpha(maintenant))
+            # LE FADER DE CASE AGIT SUR L'IMAGE, PAS SEULEMENT SUR LE SON. Sur un fondu
+            # rejoue rien ne reanalyse, et une image qui ignore la main pendant que le son
+            # lui obeit ne se comprend pas. Le reglage appartient a ce qui affiche, comme
+            # l'avance : le niveau dessine est le niveau publie fois le gain du fader, et
+            # la case le dit (« ×0,4 ») pour qu'on ne prenne pas le geste pour une mesure.
+            if any(g < 0.999 for g in self.gains):
+                self.paquet.sources = [
+                    {**s, "niveau": s["niveau"] * self.gains[r]} if self.gains[r] < 0.999 else s
+                    for r, s in enumerate(self.paquet.sources)]
 
             # LE CURSEUR DE MESURE AVANCE DE CE DONT LE TEMPS A AVANCE, et se corrige
             # doucement quand la mesure est connue. Il doit se calculer APRES la vue
@@ -1182,6 +1191,8 @@ class Mur(QWidget):
         # encore, puisqu'il est a cheval sur les deux.
         if s["platine"] == 3:
             gauche += "  P1+P2"
+        if self.gains[r] < 0.999:
+            gauche += f"  ×{self.gains[r]:.1f}".replace(".", ",")
         # LE DEGRE JOUE, quand la fiche donne la gamme : I la tonique, V la quinte, · hors
         # gamme. C'est ce qui survit a une transition Camelot.
         degre = DEGRES[s["degre"]] if s["degre"] < len(DEGRES) else ""

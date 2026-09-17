@@ -160,6 +160,47 @@ if (args.FirstOrDefault(a => a.StartsWith("blend="))?[6..] is { } fichierBlend)
     estimateurBlend = new BlendEstimator();
 }
 
+// « profils=<fichier.json> » : les gabarits appris, dans l'ordre du grave a l'aigu, avec
+// ce qu'il faut pour les relire : l'axe logarithmique et le glissement. On exporte a la fin
+// de la passe — et, en relais, a chaque phase (A seul, les deux, B seul), parce que les
+// rangs changent de sens a l'accueil et au retrait : <profils>-1.json, -2.json, -3.json.
+var cheminProfils = args.FirstOrDefault(a => a.StartsWith("profils="))?[8..];
+void EcrireProfils(string fichier)
+{
+    var separation = analyzer.Separation;
+    var bins = separation.Bins;
+    var profil = new float[bins];
+    var lignes = new List<string>
+    {
+        "{",
+        $"  \"fichier\": \"{Path.GetFileName(path).Replace("\\", "/")}\",",
+        $"  \"taux\": {rate},",
+        $"  \"fenetre\": {SourceSeparator.FenetreLog},",
+        $"  \"cases\": {ProfileLearner.NLog},",
+        $"  \"parOctave\": {ProfileLearner.ParOctave},",
+        $"  \"f0\": {separation.F0.ToString("G6", System.Globalization.CultureInfo.InvariantCulture)},",
+        $"  \"accordageCents\": {separation.AccordageCents.ToString("G6", System.Globalization.CultureInfo.InvariantCulture)},",
+        $"  \"positions\": {ProfileLearner.Positions},",
+        $"  \"longueur\": {bins},",
+        $"  \"pret\": {(separation.Pret ? "true" : "false")},",
+        $"  \"actives\": {separation.Actives},",
+        "  \"gabarits\": [",
+    };
+    for (var r = 0; r < separation.Actives; r++)
+    {
+        separation.ProfilOrdonne(r, profil);
+        var vals = string.Join(",", profil.Select(v =>
+            v.ToString("G6", System.Globalization.CultureInfo.InvariantCulture)));
+        lignes.Add($"    [{vals}]" + (r < separation.Actives - 1 ? "," : ""));
+    }
+    lignes.Add("  ]");
+    lignes.Add("}");
+    File.WriteAllLines(fichier, lignes);
+    Console.WriteLine($"{separation.Actives} gabarits ecrits vers {fichier}"
+                      + (separation.Pret ? "" : "  — ATTENTION : rien n'a ete appris"));
+}
+string ProfilsPhase(int n) => cheminProfils is null ? "" : Path.ChangeExtension(cheminProfils, null) + $"-{n}.json";
+
 // LES DEUX REGIMES, DANS LE MEME PROCESSUS.
 //
 // Un ecart tenace separait la sonde du direct : sur le meme fichier, la sonde trouve 87 BPM
@@ -414,11 +455,14 @@ for (var i = 0; i + hop <= mono.Length; i += hop)
     // Le relais hors ligne, au rythme du fondu declare.
     if (empreinteB is not null)
     {
+        if (relaisFait == 0 && cheminProfils is not null && !File.Exists(ProfilsPhase(1))) EcrireProfils(ProfilsPhase(1));
         if (relaisFait == 0 && tMs >= fonduT0 * 1000) { analyzer.Accueillir(empreinteB); relaisFait = 1;
-            Console.WriteLine($"   t={tMs / 1000.0,6:F1} s  accueil de B : {analyzer.Separation.Actives} gabarits suivis, reste partage"); }
+            Console.WriteLine($"   t={tMs / 1000.0,6:F1} s  accueil de B : {analyzer.Separation.Actives} gabarits suivis, reste partage");
+            if (cheminProfils is not null) EcrireProfils(ProfilsPhase(2)); }
         if (relaisFait == 1 && empreinteB.Bpm > 0f && tMs >= (fonduT0 + fonduT1) * 500) { analyzer.AdoptTempo(empreinteB.Bpm, tMs); relaisFait = 3; }
         if (relaisFait is 1 or 3 && tMs >= fonduT1 * 1000) { analyzer.Retirer(); relaisFait = 2;
-            Console.WriteLine($"   t={tMs / 1000.0,6:F1} s  retrait de A : {analyzer.Separation.Actives} gabarits suivis"); }
+            Console.WriteLine($"   t={tMs / 1000.0,6:F1} s  retrait de A : {analyzer.Separation.Actives} gabarits suivis");
+            if (cheminProfils is not null) EcrireProfils(ProfilsPhase(3)); }
     }
 
     chronoImage.Restart();
@@ -965,39 +1009,9 @@ if (bpmTrace is not null && traceBpm is not null)
 //
 // On exporte a la FIN de la passe : les profils s'apprennent, et ceux du debut ne decrivent
 // que du bruit.
-if (args.FirstOrDefault(a => a.StartsWith("profils="))?[8..] is { } fichierProfils)
+if (cheminProfils is not null)
 {
-    var separation = analyzer.Separation;
-    var bins = separation.Bins;
-    var profil = new float[bins];
-    var lignes = new List<string>
-    {
-        "{",
-        $"  \"fichier\": \"{Path.GetFileName(path).Replace("\\", "/")}\",",
-        $"  \"taux\": {rate},",
-        $"  \"fenetre\": {SourceSeparator.FenetreLog},",
-        $"  \"cases\": {ProfileLearner.NLog},",
-        $"  \"parOctave\": {ProfileLearner.ParOctave},",
-        $"  \"f0\": {separation.F0.ToString("G6", System.Globalization.CultureInfo.InvariantCulture)},",
-        $"  \"accordageCents\": {separation.AccordageCents.ToString("G6", System.Globalization.CultureInfo.InvariantCulture)},",
-        $"  \"positions\": {ProfileLearner.Positions},",
-        $"  \"longueur\": {bins},",
-        $"  \"pret\": {(separation.Pret ? "true" : "false")},",
-        $"  \"actives\": {separation.Actives},",
-        "  \"gabarits\": [",
-    };
-    for (var r = 0; r < separation.Actives; r++)
-    {
-        separation.ProfilOrdonne(r, profil);
-        var vals = string.Join(",", profil.Select(v =>
-            v.ToString("G6", System.Globalization.CultureInfo.InvariantCulture)));
-        lignes.Add($"    [{vals}]" + (r < separation.Actives - 1 ? "," : ""));
-    }
-    lignes.Add("  ]");
-    lignes.Add("}");
-    File.WriteAllLines(fichierProfils, lignes);
-    Console.WriteLine($"\n{separation.Actives} gabarits ecrits vers {fichierProfils}"
-                      + (separation.Pret ? "" : "  — ATTENTION : rien n'a ete appris"));
+    EcrireProfils(cheminProfils);
 }
 
 if (fichierChroma is not null && chromaMoyen is not null && chromaImages > 0)

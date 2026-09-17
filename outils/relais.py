@@ -307,7 +307,8 @@ def analyser(p, casque):
     cmd = ["dotnet", "run", "-c", "Release", "--no-build", "--project", os.path.join(RACINE, "tools", "Emotion.Probe"), "--",
            base + ".wav", "0", str(int(p["n"] / p["taux"]) + 1),
            f"relaisA={base}-A.wav", f"relaisB={base}-B.wav", f"fondu={p['t0']:.2f},{p['t1']:.2f}", f"cue={casque:.0f}",
-           f"blend={base}-cueB.wav", f"fader={base}.fader.tsv", f"sources={base}.tsv", f"paquets={base}.pak"]
+           f"blend={base}-cueB.wav", f"fader={base}.fader.tsv", f"sources={base}.tsv", f"paquets={base}.pak",
+           f"profils={base}.gabarits.json"]
     r = subprocess.run(cmd, capture_output=True, text=True)
     for l in r.stdout.splitlines():
         if l.startswith("cue ") or l.startswith("master") or "accueil de B" in l or "retrait de A" in l:
@@ -315,6 +316,60 @@ def analyser(p, casque):
     if r.returncode != 0:
         print(r.stderr[-1200:]); raise SystemExit(1)
     print(f"paquets enregistres : {base}.pak  (a rejouer : ./outils/fondu.sh {os.path.basename(base).replace('--', ' ')})")
+
+
+# ------------------------------------------------------------------ les pistes, sous les faders
+def pistes(p, dire=print):
+    """Une piste par case, taillee sur les gabarits de CHAQUE phase du relais.
+
+    LES FADERS DE LA FENETRE NE FAISAIENT RIEN SUR LE FONDU REJOUE : le son etait un
+    enregistrement du melange, l'image des paquets enregistres. Ici on refait ce que
+    `stems.py` fait en direct — extraire le son de chaque case avec les gabarits du moteur —
+    mais phase par phase, parce que les rangs changent de sens a l'accueil et au retrait :
+    la case 3 est un gabarit de A avant, un autre pendant, un gabarit de B apres. Chaque
+    piste est donc cousue de trois morceaux, un par phase, avec un fondu de 20 ms aux
+    coutures. La somme des pistes redonne le melange ; sous les faders, on entend chaque
+    case, et on peut la baisser.
+    """
+    import extraire
+    base, taux = p["base"], p["taux"]
+    mix, _ = lire(base + ".wav")
+    n = len(mix)
+    phases = []
+    for k, (t0, t1) in enumerate(((0.0, p["t0"]), (p["t0"], p["t1"]), (p["t1"], n / taux)), 1):
+        chemin = f"{base}.gabarits-{k}.json"
+        if not os.path.exists(chemin):
+            dire(f"pas de gabarits pour la phase {k} ({chemin}) : pas de pistes"); return None
+        with open(chemin, encoding="utf-8") as fh:
+            phases.append((t0, t1, json.load(fh)))
+    marge = 1.0
+    coutures = int(0.02 * taux)
+    sorties = [np.zeros(n) for _ in range(8)]
+    for k, (t0, t1, g) in enumerate(phases, 1):
+        a = max(0, int((t0 - marge) * taux)); b = min(n, int((t1 + marge) * taux))
+        hop = max(1, g["fenetre"] // extraire.RECOUVREMENT)
+        sons, _, m = extraire.separer_gabarits(mix[a:b], g, hop, dire=lambda *x, **y: None)
+        if m < 8:
+            dire(f"phase {k} trop courte"); return None
+        d0, d1 = int(t0 * taux), int(t1 * taux)
+        for r, y in enumerate(sons[:8]):
+            seg = y[d0 - a:d1 - a]
+            # la couture : un fondu de 20 ms de part et d'autre, pour ne pas claquer
+            fen = np.ones(len(seg))
+            if k > 1 and len(seg) > coutures: fen[:coutures] = np.linspace(0, 1, coutures)
+            if k < 3 and len(seg) > coutures: fen[-coutures:] = np.linspace(1, 0, coutures)
+            sorties[r][d0:d1] += seg * fen
+        dire(f"phase {k} ({t0:.0f}-{t1:.0f} s) : {len(sons) - 1} gabarits + reste")
+    # AUX COUTURES, LA SOMME DES PISTES N'EST PLUS LE MELANGE : la phase qui sort s'eteint
+    # sans que celle qui entre ait encore commence (les deux fondus sont sur le meme cote de
+    # l'instant). Vingt millisecondes de creux, deux fois par passage : inaudible, et
+    # cent fois preferable a un claquement.
+    ecrites = []
+    for r, y in enumerate(sorties):
+        if np.abs(y).max() < 1e-4: break
+        chemin = f"{base}-piste-{r + 1}.wav"; ecrire(chemin, y, taux); ecrites.append(chemin)
+    dire(f"{len(ecrites)} pistes ecrites : {base}-piste-1..{len(ecrites)}.wav  (la fenetre les joue sous ses faders)")
+    return ecrites
 
 
 # ------------------------------------------------------------------ le juge
@@ -459,6 +514,7 @@ def main():
     p = fabriquer_lineaire(o.a, o.b, dossier) if o.lineaire else fabriquer(o.a, o.b, o.un_a, o.un_b, dossier, o.nudge_ms)
     if not o.juge_seul:
         analyser(p, o.casque)
+        pistes(p)
     juger(p)
     return 0
 

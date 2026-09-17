@@ -30,14 +30,21 @@ fi
 # Aucun serveur ne doit ecrire dans l'anneau en meme temps.
 for pid in $(pgrep -f Emotion.Server); do kill "$pid" 2>/dev/null; done
 
-# LE SON AVEC L'IMAGE. Le rejeu n'ecrit que des paquets ; le melange que la sonde a analyse
-# est a cote (relais.py l'ecrit en .wav). On le joue a l'instant ou la sonde commence a
-# ecrire — elle imprime « N paquets, … » juste avant de lancer son chronometre, c'est le
-# signal. Au ralenti, pas de son : un lecteur ne ralentit pas sans changer la hauteur.
+# LE SON AVEC L'IMAGE, ET SOUS LES FADERS. Le rejeu n'ecrit que des paquets. Quand
+# relais.py a ecrit les pistes par case (<A--B>-piste-N.wav), c'est la fenetre qui les
+# joue, sous ses faders, calee sur l'horloge des paquets : on peut baisser une case et
+# l'entendre. Sinon, on joue le melange avec paplay a l'instant ou la sonde commence a
+# ecrire — elle imprime « N paquets, … » juste avant son chronometre. Au ralenti, pas de
+# son : un lecteur ne ralentit pas sans changer la hauteur.
 WAV="$CACHE/relais/$A--$B.wav"
+PISTES="$CACHE/relais/$A--$B-piste"
 SON=""
 if [[ "$VITESSE" != "1" ]]; then
   echo "au ralenti, pas de son (le melange est dans $WAV)"
+elif [[ -f "$PISTES-1.wav" ]]; then
+  echo "les pistes par case jouent dans la fenetre, sous les faders (bord droit de chaque case)"
+  export EMOTION_MORCEAU="$WAV" EMOTION_PISTES="$PISTES"
+  WAV=""
 elif [[ ! -f "$WAV" ]]; then
   echo "pas de melange a jouer ($WAV absent) : image seule"
 fi
@@ -45,7 +52,7 @@ SON_PID="$(mktemp)"
 {
   dotnet run -c Release --no-build --project tools/Emotion.Probe -- rejoue "$PAK" "$VITESSE" | while IFS= read -r ligne; do
     echo "$ligne"
-    if [[ "$ligne" == *paquets* && "$VITESSE" == "1" && -f "$WAV" ]]; then
+    if [[ "$ligne" == *paquets* && "$VITESSE" == "1" && -n "$WAV" && -f "$WAV" ]]; then
       paplay "$WAV" & echo $! > "$SON_PID"
     fi
   done

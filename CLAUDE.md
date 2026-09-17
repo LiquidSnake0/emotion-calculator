@@ -2346,6 +2346,15 @@ Pistes ouvertes, à trancher avec lui : lire les cases de B **au casque** (le cu
 d'analyser B pendant le passage, ses niveaux sont exacts, le master n'a qu'à retrancher
 g·cue) ; piloter le retrait par ce qui reste de A une fois B retranché.
 
+**Le fondu rejoué s'entend sous les faders, et l'image suit la main (17 septembre).** La
+sonde exporte les gabarits du master à chaque phase du relais (`profils=` → `-1/-2/-3.json`),
+`relais.py` extrait le son de chaque case phase par phase et coud une piste par case (20 ms
+de creux aux coutures, somme = mélange à 24 dB), `fondu.sh` les fait jouer par la fenêtre
+sous ses faders au lieu de `paplay`. Et le fader de case agit sur l'image : le niveau dessiné
+est le niveau publié fois le gain, la case l'écrit (« ×0,4 »). C'est un réglage de ce qui
+affiche, comme l'avance — rien ne réanalyse. Son idée : « un flag qui indique comment l'image
+doit afficher en fonction du curseur ».
+
 **La scène par platine (16 septembre)** est la spécification du GPU jouée sur le mock, et
 elle a fixé deux règles : la composition se fait sur le **tag de platine** des cases, jamais
 sur « joue / entre » (qui changent de sens au retrait) ; et **toute ouverture ou fermeture de
