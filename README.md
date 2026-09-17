@@ -184,7 +184,8 @@ vient tout seul, les cases de la platine qui sort baissant avec son fader.
 
 **Et le rendu se construit sans table.** `outils/relais.py` enregistre les paquets du
 mélange (`paquets=`, les 256 octets bout à bout) ; `./outils/fondu.sh A B` les rejoue dans
-l'anneau partagé à leur cadence (`probe rejoue`) et ouvre la fenêtre. Un vrai fondu, à
+l'anneau partagé à leur cadence (`probe rejoue`), joue le mélange en même temps (il part à
+l'instant où la sonde commence à écrire) et ouvre la fenêtre. Un vrai fondu, avec son son, à
 l'identique, autant de fois qu'il faut.
 
 **Et la fenêtre compose désormais une scène par platine.** Elle ne pose plus les huit cases

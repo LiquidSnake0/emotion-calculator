@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Un fondu enregistre, rejoue dans la fenetre — sans table, sans serveur, sans carte son.
+# Un fondu enregistre, rejoue dans la fenetre avec son melange — sans table, sans serveur.
 #
 #   ./outils/fondu.sh 05_Dead_Internet_Theory_ 04_Glyph_Chamber_
 #   ./outils/fondu.sh 05_Dead_Internet_Theory_ 04_Glyph_Chamber_ 0.5    # au ralenti
@@ -30,8 +30,27 @@ fi
 # Aucun serveur ne doit ecrire dans l'anneau en meme temps.
 for pid in $(pgrep -f Emotion.Server); do kill "$pid" 2>/dev/null; done
 
-dotnet run -c Release --no-build --project tools/Emotion.Probe -- rejoue "$PAK" "$VITESSE" &
+# LE SON AVEC L'IMAGE. Le rejeu n'ecrit que des paquets ; le melange que la sonde a analyse
+# est a cote (relais.py l'ecrit en .wav). On le joue a l'instant ou la sonde commence a
+# ecrire — elle imprime « N paquets, … » juste avant de lancer son chronometre, c'est le
+# signal. Au ralenti, pas de son : un lecteur ne ralentit pas sans changer la hauteur.
+WAV="$CACHE/relais/$A--$B.wav"
+SON=""
+if [[ "$VITESSE" != "1" ]]; then
+  echo "au ralenti, pas de son (le melange est dans $WAV)"
+elif [[ ! -f "$WAV" ]]; then
+  echo "pas de melange a jouer ($WAV absent) : image seule"
+fi
+SON_PID="$(mktemp)"
+{
+  dotnet run -c Release --no-build --project tools/Emotion.Probe -- rejoue "$PAK" "$VITESSE" | while IFS= read -r ligne; do
+    echo "$ligne"
+    if [[ "$ligne" == *paquets* && "$VITESSE" == "1" && -f "$WAV" ]]; then
+      paplay "$WAV" & echo $! > "$SON_PID"
+    fi
+  done
+} &
 REJEU=$!
-trap 'kill $REJEU 2>/dev/null' EXIT INT TERM
+trap 'kill $REJEU 2>/dev/null; pkill -f "Emotion.Probe.*rejoue" 2>/dev/null; [[ -s "$SON_PID" ]] && kill "$(cat "$SON_PID")" 2>/dev/null; rm -f "$SON_PID"' EXIT INT TERM
 sleep 1
 python3 outils/fenetre.py "$A → $B  (fondu rejoue)" 2>&1 | tee -a "$CACHE/fenetre.log"
