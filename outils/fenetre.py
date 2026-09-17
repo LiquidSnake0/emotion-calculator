@@ -1068,19 +1068,27 @@ class Mur(QWidget):
             else:
                 par_scene[ouverte].append(r)
 
-        largeurs_case = {}
+        largeurs_case = {k: (sw - (cols - 1) * G) / cols for k, (sx, sw) in scenes.items() if sw >= 2.0}
+        # LA PLACE DU RESTE PARTAGE, calculee avant la grille : a cheval sur la frontiere, il
+        # mordait sur les cadres vides de la seconde rangee, et le DJ l'a vu.
+        rect_reste = None
+        if partagees and deux and 1 in largeurs_case and 2 in largeurs_case:
+            lr = (largeurs_case[1] + largeurs_case[2]) / 2
+            rect_reste = (scenes[2][0] - G / 2 - lr / 2, y_grille + (haut + 12), lr, haut)
         for k, (sx, sw) in scenes.items():
-            if sw < 2.0:
+            if k not in largeurs_case:
                 continue
-            larg = (sw - (cols - 1) * G) / cols
-            largeurs_case[k] = larg
+            larg = largeurs_case[k]
             self.etiquette_scene(d, p, k, sx, y, sw)
             visible = larg > 40
             # LA GRILLE DE LECTURE, meme vide : l'oeil s'y ancre pour comparer une case a sa
-            # voisine, et une grille qui apparait avec sa premiere case n'ancre rien.
+            # voisine, et une grille qui apparait avec sa premiere case n'ancre rien. Sauf
+            # sous le reste partage, qui a sa place a lui.
             for i in range(rangs * cols):
                 cx = sx + (i % cols) * (larg + G)
                 cy = y_grille + (i // cols) * (haut + 12)
+                if rect_reste is not None and cy == rect_reste[1] and cx < rect_reste[0] + rect_reste[2] and cx + larg > rect_reste[0]:
+                    continue
                 d.setPen(QPen(QColor(34, 36, 38), 1))
                 d.drawRect(int(cx), int(cy), int(larg), haut)
             if not visible:
@@ -1094,11 +1102,8 @@ class Mur(QWidget):
         # LE RESTE PARTAGE, a cheval sur la frontiere : il appartient aux deux, il se
         # dessine entre les deux. Une seule scene ouverte : il rejoint sa grille.
         for j, r in enumerate(partagees):
-            if deux and 1 in largeurs_case and 2 in largeurs_case:
-                larg = (largeurs_case[1] + largeurs_case[2]) / 2
-                frontiere = scenes[2][0] - G / 2
-                cx = frontiere - larg / 2
-                cy = y_grille + (haut + 12)
+            if rect_reste is not None:
+                cx, cy, larg, _ = rect_reste
             else:
                 k = ouverte
                 if k not in largeurs_case:
@@ -1233,20 +1238,24 @@ class Mur(QWidget):
         place = x_verdict - (cx + 8) - 8
         # On lache d'abord les mots de la fin — degre, nature, forme — et le rang avec sa
         # platine reste entier : « 5 P1 » tronque de « 5 P1+P2 » dirait le contraire de
-        # ce qu'il faut dire.
+        # ce qu'il faut dire. Si meme cela ne tient pas, c'est le verdict qui cede.
         mots = [x for x in (gauche, nom, nature, degre) if x]
         if absente:
             mots.append(f"⌁ absent {max(1, math.ceil(s['retrait']))} s")
         while len(mots) > 1 and fm.horizontalAdvance("  ".join(mots)) > place:
             mots.pop()
         titre = "  ".join(mots)
-        while titre and fm.horizontalAdvance(titre) > place:
-            titre = titre[:-1]
+        if fm.horizontalAdvance(titre) > place:
+            verdict = ""
+            place = larg - FADER_LARGE - 18
+            while titre and fm.horizontalAdvance(titre) > place:
+                titre = titre[:-1]
         d.setPen(GRIS_CADRE if (absente or eteinte) else
                  GRIS_CLAIR if choisie else GRIS_TEXTE)
         d.drawText(int(cx) + 8, int(cy) + 16, titre)
-        d.setPen(GRIS_CADRE if eteinte else (GRIS_CLAIR if vif else GRIS_CADRE))
-        d.drawText(int(x_verdict), int(cy) + 16, verdict)
+        if verdict:
+            d.setPen(GRIS_CADRE if eteinte else (GRIS_CLAIR if vif else GRIS_CADRE))
+            d.drawText(int(x_verdict), int(cy) + 16, verdict)
 
         # LA TAILLE SE DONNE EN PIXELS, PAS EN POINTS. setPointSizeF prend des
         # points ; a 96 points par pouce un point vaut 1,33 pixel, donc une taille

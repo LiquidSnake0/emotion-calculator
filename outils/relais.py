@@ -4,6 +4,7 @@ relais, juge case par case.
 
     python3 outils/relais.py 09_Codex_Sinaiticus_ 06_Passepartout_
     python3 outils/relais.py A B --un-b 4          # le « 1 » de B est son 5e temps detecte
+    python3 outils/relais.py A B --nudge-ms 40     # B 40 ms plus tard, a l'oreille
     python3 outils/relais.py A B --lineaire        # l'ancien fondu lineaire de 20 s
 
 LE CRATE DECIDE, PAS CE FICHIER. Le BPM auquel chaque disque se joue (`anchorBpm`) et la
@@ -181,6 +182,33 @@ class Passage:
         return t(17) + 0.15 * (t(25) - t(17)), t(57) + 0.9 * (t(65) - t(57))
 
 
+def caler_a_la_main(A_m, B_m, taux, periode, t0, t1, pas_s=0.005):
+    """Le nudge du DJ : B glisse de moins d'une demi-periode pour que ses kicks tombent sur
+    ceux de A. La grille verite se pose a un demi-temps pres (les deux sommets du profil se
+    ressemblent) : deux grilles justes chacune peuvent se retrouver a un demi-temps l'une de
+    l'autre, et c'est ce qui s'entend comme « un leger decalage ». On juge sur les attaques
+    du registre grave, entre t0 et t1, ou les deux jouent a fond. Rend le decalage en
+    echantillons a appliquer a B, et la correlation avant / apres."""
+    def attaques(x):
+        l, _ = couper_bas(x, taux)
+        pas = int(pas_s * taux); m = len(l) // pas * pas
+        e = np.abs(l[:m]).reshape(-1, pas).mean(axis=1)
+        d = np.maximum(np.diff(e), 0); return d - d.mean()
+    s0, s1 = int(t0 * taux), int(t1 * taux)
+    oa, ob = attaques(A_m[s0:s1]), attaques(B_m[s0:s1])
+    nb = np.linalg.norm(oa) * np.linalg.norm(ob)
+    if nb < EPS:
+        return 0, 0.0, 0.0
+    maxlag = int(periode / 2 / pas_s)
+    def corr(lag):
+        if lag >= 0: return float(oa[lag:] @ ob[:len(ob) - lag]) / nb
+        return float(oa[:lag] @ ob[-lag:]) / nb
+    lags = range(-maxlag, maxlag + 1)
+    best = max(lags, key=corr)
+    # un lag positif veut dire que B est en avance sur A : il faut le retarder
+    return int(round(best * pas_s * taux)), corr(0), corr(best)
+
+
 def placer(x, decalage, n):
     """x pose a `decalage` echantillons (negatif : on coupe le debut), sur n echantillons."""
     z = np.zeros(n)
@@ -191,7 +219,7 @@ def placer(x, decalage, n):
     return z
 
 
-def fabriquer(a_nom, b_nom, un_a, un_b, dossier):
+def fabriquer(a_nom, b_nom, un_a, un_b, dossier, nudge_ms=0.0):
     fa, fb = fiche(a_nom), fiche(b_nom)
     a, taux = lire(os.path.join(CACHE, a_nom + ".wav"))
     b, taux_b = lire(os.path.join(CACHE, b_nom + ".wav"))
@@ -217,6 +245,20 @@ def fabriquer(a_nom, b_nom, un_a, un_b, dossier):
     # B lache de son « 1 » sur le 1 de la mesure 17 de A.
     decalage = int(round((passage.t(17) - tB[un_b]) * taux))
     A_m = placer(A, 0, n); B_m = placer(B, decalage, n)
+    nudge, c0, c1 = caler_a_la_main(A_m, B_m, taux, 60.0 / fa["joue"], passage.t(25), passage.t(41))
+    if abs(nudge) > int(0.008 * taux):
+        decalage += nudge
+        print(f"calage a la main : B decale de {1000 * nudge / taux:+.0f} ms pour tomber sur les kicks de A "
+              f"(accord des attaques graves {c0:.3f} → {c1:.3f})")
+    else:
+        print(f"calage : les grilles s'accordent deja (attaques graves {c0:.3f}, meilleur decalage {1000 * nudge / taux:+.0f} ms)")
+    # L'OREILLE A LE DERNIER MOT : l'accord des attaques entre deux disques differents reste
+    # faible (0,05 a 0,10), la mesure ne tranche pas un demi-temps a coup sur. `--nudge-ms`
+    # applique ce que le DJ entend, par-dessus.
+    if nudge_ms:
+        decalage += int(round(nudge_ms / 1000.0 * taux))
+        print(f"nudge de l'oreille : B decale de {nudge_ms:+.0f} ms en plus")
+    B_m = placer(B, decalage, n)
     lA, hA = couper_bas(A_m, taux); lB, hB = couper_bas(B_m, taux)
     canalA = fA * (lowA * lA + hA)
     canalB_plein = lowB * lB + hB          # ce que le casque entend de B : apres EQ, fader a fond
@@ -409,11 +451,12 @@ def main():
     ap.add_argument("--un-a", type=int, default=0, help="indice du temps de A qui est un « 1 »")
     ap.add_argument("--un-b", type=int, default=0, help="indice du temps de B qui est un « 1 »")
     ap.add_argument("--casque", type=float, default=CASQUE_S, help="secondes de cue avant le passage")
+    ap.add_argument("--nudge-ms", type=float, default=0.0, help="decaler B a l'oreille, en ms (+ = B plus tard)")
     ap.add_argument("--lineaire", action="store_true", help="l'ancien fondu lineaire de 20 s")
     ap.add_argument("--juge-seul", action="store_true", help="ne refabrique ni n'analyse : juge le tsv existant")
     o = ap.parse_args()
     dossier = os.path.join(CACHE, "relais"); os.makedirs(dossier, exist_ok=True)
-    p = fabriquer_lineaire(o.a, o.b, dossier) if o.lineaire else fabriquer(o.a, o.b, o.un_a, o.un_b, dossier)
+    p = fabriquer_lineaire(o.a, o.b, dossier) if o.lineaire else fabriquer(o.a, o.b, o.un_a, o.un_b, dossier, o.nudge_ms)
     if not o.juge_seul:
         analyser(p, o.casque)
     juger(p)
