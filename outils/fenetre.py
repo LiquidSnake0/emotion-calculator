@@ -1226,12 +1226,13 @@ class Mur(QWidget):
         # encore, puisqu'il est a cheval sur les deux.
         if s["platine"] == 3:
             gauche += "  P1+P2"
-        if self.gains[r] < 0.999:
-            gauche += f"  ×{self.gains[r]:.1f}".replace(".", ",")
+        # LE GAIN DU FADER, un mot a part : dans une case etroite il passe avant le nom de
+        # la forme, et il tombe entier ou pas du tout — « ×0, » ne dit rien.
+        gain = f"×{self.gains[r]:.1f}".replace(".", ",") if self.gains[r] < 0.999 else ""
         # LE DEGRE JOUE, quand la fiche donne la gamme : I la tonique, V la quinte, · hors
         # gamme. C'est ce qui survit a une transition Camelot.
         degre = DEGRES[s["degre"]] if s["degre"] < len(DEGRES) else ""
-        titre = "  ".join(x for x in (gauche, nom, nature, degre) if x)
+        titre = "  ".join(x for x in (gauche, gain, nom, nature, degre) if x)
 
         # UNE SOURCE RETIREE SE DIT, ELLE NE DISPARAIT PAS.
         # « Quand le kick est en retrait pendant un moment, on est censé le savoir. »
@@ -1285,7 +1286,7 @@ class Mur(QWidget):
         # On lache d'abord les mots de la fin — degre, nature, forme — et le rang avec sa
         # platine reste entier : « 5 P1 » tronque de « 5 P1+P2 » dirait le contraire de
         # ce qu'il faut dire. Si meme cela ne tient pas, c'est le verdict qui cede.
-        mots = [x for x in (gauche, nom, nature, degre) if x]
+        mots = [x for x in (gauche, gain, nom, nature, degre) if x]
         if absente:
             mots.append(f"⌁ absent {max(1, math.ceil(s['retrait']))} s")
         while len(mots) > 1 and fm.horizontalAdvance("  ".join(mots)) > place:

@@ -204,17 +204,36 @@ il recevra huit cases signées et composera, il ne mélangera pas deux images.
 <table>
 <tr>
 <td width="50%"><img src="docs/images/fondu-A.png" alt="A seul"><br>
-<sub>A seul : la platine 1 prend toute la largeur.</sub></td>
+<sub>Passepartout seul, mesure 16 : la platine 1 prend toute la largeur, trois gabarits et le reste. Le DJ a baissé le kick (case 4, « ×0,3 ») : la boule est petite, et le son l'est aussi.</sub></td>
 <td width="50%"><img src="docs/images/fondu-accueil.png" alt="L'accueil, 0,2 s après"><br>
-<sub>0,2 s après l'accueil : la scène de P2 s'ouvre, le reste passe à cheval.</sub></td>
+<sub>0,2 s après l'accueil de Codex : la scène de P2 s'ouvre, le reste passe à cheval — en case 8, et son fader l'a suivi.</sub></td>
 </tr>
 <tr>
-<td><img src="docs/images/fondu-mi.png" alt="Mi-fondu"><br>
-<sub>Mi-fondu : deux scènes, deux cases par disque, le reste entre les deux ; la barre de P1 baisse, celle de P2 monte.</sub></td>
+<td><img src="docs/images/fondu-mi.png" alt="Pendant le bass swap"><br>
+<sub>Mesure 41, le bass swap commence : trois cases de A, quatre de B, le reste entre les deux, le pitch de B à −3 %.</sub></td>
 <td><img src="docs/images/fondu-B.png" alt="B seul"><br>
-<sub>B seul : la scène de P1 s'est fermée, P2 est restée à droite.</sub></td>
+<sub>Codex seul : la scène de P1 s'est fermée, P2 est restée à droite, le kick est en case 5 et toujours à ×0,3.</sub></td>
 </tr>
 </table>
+
+**Le fondu rejoué s'entend sous les faders, et l'image suit la main.** Le rejeu n'écrit que
+des paquets ; le son était `paplay` sur le mélange, et les faders de case ne faisaient rien.
+Maintenant la sonde exporte les gabarits du master **à chaque phase** du passage (A seul,
+les deux, B seul), `relais.py` extrait le son de chaque case avec les gabarits de sa phase et
+coud une piste par case (vingt millisecondes de creux aux coutures, somme égale au mélange à
+24 dB), et `fondu.sh` les fait jouer par la fenêtre sous ses faders. Le fader agit aussi sur
+l'image : le niveau dessiné est le niveau publié fois le gain, la case l'écrit (« ×0,3 »).
+Rien ne réanalyse ; c'est un réglage de ce qui affiche, comme l'avance.
+
+**Et le fader suit l'instrument, pas le numéro de la case.** À l'accueil, les rangs changent
+de sens : le reste passe de la case 4 à la case 8, la case 4 devient le premier gabarit de
+B. Le DJ avait baissé le kick ; à l'arrivée de B, son fader baissait un synthé et le kick
+revenait à fond — « ça reset la piste A ». Les gains sont reportés par identité (le reste
+vers le reste, la i-ème case d'une platine vers la i-ème case de la même platine), vérifié
+sur le passage enregistré : 0,3 en case 4 avant, en case 8 pendant, en case 5 après. C'est une
+règle pour le rendu final aussi : **un numéro de case n'est pas une identité**, et suivre un
+instrument à travers un passage demandera soit un identifiant stable dans le paquet, soit ce
+report côté rendu.
 
 **Puis le passage a été refait comme le DJ le fait, et le verdict a changé.** Le fondu
 linéaire de vingt secondes n'est pas un passage vinyle. `outils/relais.py` fabrique désormais
@@ -247,11 +266,10 @@ sonde rend ce qu'il devinerait) et sature à 0,9 vers la mesure 31, quand B est 
 basses et que A joue encore à fond pour vingt-six mesures. La présence de B n'est pas
 l'absence de A. Le retrait doit être piloté par autre chose.
 
-Ces images sortent de `python3 outils/fondu_images.py <fondu.pak> <dossier>` : le fondu
-enregistré est rejoué hors écran, paquet par paquet, et huit instants sont rendus — A seul,
-l'accueil et ses suites, la mi-fondu, le retrait et ses suites, B seul. Sur Dead Internet
-Theory → Glyph Chamber, l'ouverture de P2 passe de 0,05 à 0,42 en 0,2 s et à 0,96 en 1,3 s ;
-au retrait, celle de P1 tombe de 0,95 à 0,52 en 0,25 s, puis à zéro.
+`python3 outils/fondu_images.py <fondu.pak> <dossier>` rend huit instants d'un fondu enregistré
+hors écran, paquet par paquet — A seul, l'accueil et ses suites, la mi-fondu, le retrait et
+ses suites, B seul. L'ouverture de P2 passe de 0,05 à 0,42 en 0,2 s et à 0,96 en 1,3 s ; au
+retrait, celle de P1 tombe de 0,95 à 0,52 en 0,25 s, puis à zéro.
 
 **Et le verrou a deux vitesses.** « Après deux ou trois boom-tchak on a déjà l'info sur le
 BPM, et le boom-tchak ne va pas changer. » Le motif du reste tenu sur quatre mesures
