@@ -669,6 +669,7 @@ class Mur(QWidget):
                 self.derniere_sequence = p.sequence
                 self.entre_images.pousser(p, maintenant)
                 self.journaliser(p)
+                self._suivre_les_rangs(p)
 
                 # LE SON SE CALE SUR L'HORLOGE DU MOTEUR, deux fois par seconde. Les deux
                 # avancent sur le meme quartz, donc l'ecart reste nul en pratique — mais le
@@ -830,6 +831,40 @@ class Mur(QWidget):
                 v = sommes[k] / n if n else 0.0
                 self.somme_vue[k] += (v - self.somme_vue[k]) * min(1.0, dt * 6.0)
         self.update()
+
+    def _suivre_les_rangs(self, p):
+        """LE FADER SUIT L'INSTRUMENT, PAS LE NUMERO DE LA CASE.
+
+        A l'accueil du second disque, les rangs changent de sens : le reste passe de la case
+        4 a la case 8, et la case 4 devient le premier gabarit de B. Le DJ avait baisse le
+        kick en case 4 ; a l'arrivee de B, son fader baissait un synthe de B et le kick
+        revenait a fond — « ca reset la piste A ». Les gains sont donc reportes par
+        identite : le reste vers le reste, la i-eme case d'une platine vers la i-eme case
+        de la meme platine, et une case nouvelle part a fond. Les pistes par case sont
+        cousues par rang de la meme facon (relais.py), donc le son suit aussi.
+        """
+        tags = tuple(p.sources[r]["platine"] for r in range(min(p.actives, 8)))
+        etat = (p.actives, tags)
+        prec = getattr(self, "_rangs_prec", None)
+        self._rangs_prec = etat
+        if prec is None or prec == etat or prec[0] == 0:
+            return
+
+        def cle(actives, tags, r):
+            if r == actives - 1:
+                return ("reste",)
+            return (tags[r], sum(1 for k in range(r) if tags[k] == tags[r]))
+        anciens = {cle(prec[0], prec[1], r): self.gains[r] for r in range(min(prec[0], 8))}
+        nouveaux = [1.0] * 8
+        for r in range(min(p.actives, 8)):
+            nouveaux[r] = anciens.get(cle(p.actives, tags, r), 1.0)
+        if nouveaux != self.gains:
+            self.gains = nouveaux
+            if self.lecteur is not None:
+                for r, g in enumerate(self.gains):
+                    self.lecteur.gain(r, g)
+            journal_fenetre(f"rangs changes ({prec[0]} → {p.actives} cases) : gains reportes par identite "
+                            + " ".join(f"{g:.1f}" for g in self.gains[:p.actives]))
 
     # ------------------------------------------------------------------ dessin
     def paintEvent(self, _):
