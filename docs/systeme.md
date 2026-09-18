@@ -1,11 +1,11 @@
 # Le systeme : trois depots, et ce qui circule entre eux
 
-Emotion Emulator n'est pas une application, c'est le maillon central d'une chaine qui va du
+emotion-calculator, le moteur de l'ensemble Emotion Emulator, n'est pas une application, c'est le maillon central d'une chaine qui va du
 telephone au mur. Ce document fixe qui fait quoi et ce qui passe entre les trois.
 
 ```
    ┌─────────────┐        ┌──────────────────┐        ┌────────────────────┐
-   │    crate    │        │ emotion-emulator │        │  emotion-renderer  │
+   │    crate    │        │emotion-calculator│        │  emotion-renderer  │
    │  telephone  │        │      .NET 10     │        │     CUDA / C++     │
    │             │        │                  │        │                    │
    │ bibliotheque│───────▶│     analyse      │───────▶│   deux processus   │──▶ mur
@@ -23,7 +23,7 @@ telephone au mur. Ce document fixe qui fait quoi et ce qui passe entre les trois
 
 ## Ce que chacun sait, et lui seul
 
-| | `crate` | `emotion-emulator` | `emotion-renderer` |
+| | `crate` | `emotion-calculator` | `emotion-renderer` |
 |---|---|---|---|
 | Ce qu'il detient | ce que le DJ **possede** et a **saisi** | ce qui **sonne**, maintenant | ce qui s'**affiche** |
 | Famille, Camelot, pochette | source unique | jamais detectes | recus |
@@ -40,7 +40,7 @@ telephone au mur. Ce document fixe qui fait quoi et ce qui passe entre les trois
 
 ## Les trois canaux
 
-### 1. `crate` → `emotion-emulator` : la fiche du disque
+### 1. `crate` → `emotion-calculator` : la fiche du disque
 
 Envoyee **au chargement**, une fois. Ce que la base sait et que le signal ne dira jamais.
 
@@ -48,7 +48,7 @@ Envoyee **au chargement**, une fois. Ce que la base sait et que le signal ne dir
 
 Rien de rythmique, rien de spectral. Ces informations-la se mesurent.
 
-### 2. `emotion-emulator` → `emotion-renderer` : le paquet, a chaque instant t
+### 2. `emotion-calculator` → `emotion-renderer` : le paquet, a chaque instant t
 
 Le canal chaud. **128 octets**, ecrits dans un anneau partage sans verrou, mesures a
 **1,5 µs** par message en `Release`.
@@ -131,7 +131,7 @@ Le rétroprojecteur est la sortie du processus master, qui compose :
 | | Depot | Etat |
 |---|---|---|
 | `crate` | existant, PWA en ligne | la bibliotheque tourne ; la fiche vers l'analyse reste a cabler |
-| `emotion-emulator` | ce depot | analyse complete, 90 tests, transport mesure a 1,5 µs |
+| `emotion-calculator` | ce depot | analyse complete, 90 tests, transport mesure a 1,5 µs |
 | `emotion-renderer` | **a creer** | CUDA / C++ |
 
 La fiche arrive par `POST /deck/cue`, `/deck/take` et `/deck/play`, et porte titre, disque,

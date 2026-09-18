@@ -486,7 +486,7 @@ class Mur(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("emotion emulator")
+        self.setWindowTitle("emotion calculator")
         self.resize(1180, 780)
         self.setAutoFillBackground(False)
 

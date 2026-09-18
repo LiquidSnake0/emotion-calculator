@@ -102,7 +102,7 @@ C'est le seul moyen honnete de tenir la promesse « reconnaitre le xylophone ».
 | Distance au centre tonal | de combien on s'eloigne de la tonique |
 | Qualite d'accord (majeur / mineur / septieme) | la couleur affective immediate |
 
-Le projet s'appelle *emotion emulator* et mesure aujourd'hui l'energie, le rythme et la
+Le moteur s'appelle *emotion-calculator* (l'ensemble, *Emotion Emulator*) et mesure aujourd'hui l'energie, le rythme et la
 couleur — mais pas la **tension**. Or c'est elle qui fait qu'un morceau serre le ventre.
 Le chromagramme est deja la ; en tirer la qualite d'accord est un produit scalaire contre
 vingt-quatre gabarits, ce qui est negligeable.
