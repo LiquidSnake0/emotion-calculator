@@ -2064,6 +2064,11 @@ sont deux besoins opposés, donc deux canaux.
 
 ### emotion-renderer — ce qui viendra derrière
 
+Le dépôt existe depuis le 18 septembre 2026 : [emotion-renderer](https://github.com/LiquidSnake0/emotion-renderer).
+Il porte le contrat, la composition par platine et une sonde qui lit l'anneau ; rien n'y
+dessine encore, et c'est voulu — il attend la relecture de ce dépôt, le crate fini et le
+DDJ-FLX4.
+
 Le rendu tourne aujourd'hui dans une fenêtre Qt, entièrement en caractères monospace : une
 chaîne par ligne, un remplissage par chaîne. Ce n'est pas un pis-aller, c'est une décision de
 mesure — réduit à du texte, le rendu devient trop rapide pour qu'un retard perçu puisse venir
