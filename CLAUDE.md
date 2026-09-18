@@ -1,4 +1,9 @@
-# Emotion Emulator
+# Emotion Calculator
+
+Le moteur d'analyse de l'ensemble **Emotion Emulator** (crate · emotion-calculator ·
+emotion-renderer). Dépôt renommé d'`emotion-emulator` en `emotion-calculator` le 18 septembre
+2026 ; les chemins `/dev/shm/emotion-emulator` et `~/.cache/emotion-emulator` gardent l'ancien
+nom à dessein, ne pas les renommer sans en parler.
 
 Moteur de projection temps réel pour les sets vinyle du DJ. Compagnon de
 [crate](https://github.com/LiquidSnake0/crate), qui reste la base de données du bac.

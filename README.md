@@ -1,4 +1,10 @@
-# Emotion Emulator
+# Emotion Calculator
+
+**Le moteur d'Emotion Emulator : l'oreille qui écoute un set de vinyles et publie ce que le rendu doit savoir.**
+Emotion Emulator est l'ensemble — [crate](https://github.com/LiquidSnake0/crate) la base du bac,
+**emotion-calculator** l'analyse, [emotion-renderer](https://github.com/LiquidSnake0/emotion-renderer) l'image ;
+ce dépôt s'appelait `emotion-emulator` jusqu'au 18 septembre 2026, les chemins `/dev/shm/emotion-emulator`
+et `~/.cache/emotion-emulator` gardent l'ancien nom à dessein.
 
 **Moteur de projection temps réel pour un set de vinyles.**
 Aux platines, le DJ pose une face ; le rétroprojecteur en donne le phénomène — des
@@ -87,7 +93,7 @@ flowchart LR
     platine["platine"]
     xone["Xone:92<br/>cue · master"]
     sono["sono"]
-    ee["<b>Emotion Emulator</b><br/>écoute le cue<br/>publie 256 octets"]
+    ee["<b>Emotion Calculator</b><br/>écoute le cue<br/>publie 256 octets"]
     gpu["unité de rendu<br/>cube · vidéo · formes"]
     crate["crate<br/>la fiche du disque"]
 
@@ -1720,7 +1726,7 @@ aux deux analyseurs.
 |---|---|---|
 | `aubiotrack` (référence C) | 117,1 BPM | **+34,6 %** |
 | `aubioonset` brut | 348,7 BPM | +301 % |
-| **Emotion Emulator** | **90,4 BPM** | **+3,9 %** |
+| **Emotion Calculator** | **90,4 BPM** | **+3,9 %** |
 | *Vérité (fiche du crate)* | *87 BPM* | |
 
 Sans triomphalisme : `aubio` règle le **cas général**, toute la musique confondue. Ce
@@ -2026,7 +2032,7 @@ autres ne peuvent pas savoir.
 ```
    ┌──────────────┐  fiche du disque : famille, Camelot,   ┌──────────────────┐
    │              │  couleur, forme voulue par source      │                  │
-   │    crate     │ ────────────── HTTP ─────────────────► │ emotion-emulator │
+   │    crate     │ ────────────── HTTP ─────────────────► │emotion-calculator│
    │  (le bac)    │                                        │   (l'analyse)    │
    │              │ ◄───────────── HTTP ────────────────── │                  │
    └──────────────┘  feu vert : « ce disque est connu »    └────────┬─────────┘
