@@ -48,7 +48,8 @@ ANNEAU=/dev/shm/emotion-emulator
 CARTE=$(aplay -l 2>/dev/null | grep -i "DJM" | head -1 | sed -E 's/^card ([0-9]+).*/\1/')
 SOURCE="${STUDIO_SOURCE:-}"      # STUDIO_SOURCE=<source> pour repeter chez soi sur une autre entree
 if [[ -z "$SOURCE" ]]; then
-  SOURCE=$(pactl list sources short 2>/dev/null | awk '{print $2}' | grep -i "djm" | grep -v monitor | head -1)
+  # La vraie carte, pas les paires djm_k qu'un lancement precedent a laissees.
+  SOURCE=$(pactl list sources short 2>/dev/null | awk '{print $2}' | grep -i "djm" | grep -v "^djm_" | grep -v monitor | head -1)
 fi
 if [[ -z "$SOURCE" ]]; then
   # Sans le nom, on prend la premiere source USB qui n'est pas un monitor.
@@ -123,6 +124,13 @@ print(f"{20*math.log10(max(rms,1e-6)):6.1f} dBFS sur {len(a)/48000:.1f} s")'
 
 etat() {
   echo "carte ALSA : ${CARTE:-aucune DJM vue}     source PulseAudio : ${SOURCE:-aucune}"
+  # La carte PulseAudio et son profil : sans « multichannel-input », la source n'a pas ses dix canaux.
+  local carte_pa; carte_pa=$(pactl list cards short 2>/dev/null | awk '{print $2}' | grep -i "djm\|usb" | head -1)
+  if [[ -n "$carte_pa" ]]; then
+    echo "carte PulseAudio : $carte_pa · profil actif : $(pactl list cards | awk -v c="$carte_pa" '$1=="Name:"{t=($2==c)} t && /Active Profile:/{print $3}')"
+    echo "  profils : $(pactl list cards | awk -v c="$carte_pa" '$1=="Name:"{t=($2==c)} t && /^\tProfiles:/{p=1;next} t && p && /^\t\t/{sub(/^\t\t/,"");sub(/:.*/,"");printf "%s ", $0} t && /Active Profile/{p=0}')"
+    echo "  changer : pactl set-card-profile $carte_pa input:multichannel-input"
+  fi
   [[ -n "$SOURCE" ]] && echo "canaux : $(canaux_de_la_source)"
   commutateurs
   echo "master = paire $MASTER_PAIRE, cue = paire $CUE_PAIRE (STUDIO_MASTER / STUDIO_CUE pour changer)"
@@ -193,7 +201,34 @@ IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if (
 CUE_DEVICES="djm_$CUE_PAIRE"; [[ "$ALTERNANCE" == "1" ]] && CUE_DEVICES="djm_$CUE_PAIRE,djm_$AUTRE_VOIE"
 echo "session $SESSION → $DIR"
 echo "table : $SOURCE, $NCH canaux · master djm_$MASTER_PAIRE · cue $CUE_DEVICES${BPM:+ · fiche $BPM BPM}${CLE:+ · $CLE}"
-echo "crate sur le telephone : http://${IP:-<ip>}:5173/crate/ (npm run dev -- --host 0.0.0.0 dans ~/Documents/crate) · moteur = http://${IP:-<ip>}:$PORT"
+
+# DEUX HEURES DE SET : NI VEILLE, NI ECRAN QUI SE VERROUILLE, NI CAPOT QUI ENDORT. Le script
+# se relance sous systemd-inhibit une fois, s'il existe.
+if [[ -z "${STUDIO_INHIBE:-}" ]] && command -v systemd-inhibit > /dev/null; then
+  export STUDIO_INHIBE=1
+  exec systemd-inhibit --what=idle:sleep:handle-lid-switch --who="studio.sh" --why="session $SESSION" "$0" "$@"
+fi
+
+# Le JSON du set pour le crate est servi d'ici, sur l'adresse du moment : l'IP change avec le
+# reseau (partage de connexion), un QR d'hier soir ne vaut plus rien.
+python3 - "$CACHE/studio" <<'PY' > /dev/null 2>&1 &
+import http.server, os, sys
+os.chdir(sys.argv[1])
+class H(http.server.SimpleHTTPRequestHandler):
+    def guess_type(self, path): return 'application/json; charset=utf-8' if path.endswith('.json') else super().guess_type(path)
+    def log_message(self, *a): pass
+http.server.ThreadingHTTPServer(('0.0.0.0', 8765), H).serve_forever()
+PY
+JSON_SERVEUR=$!
+echo
+echo "crate sur le telephone : http://${IP:-<ip>}:5173/crate/   (npm run dev -- --host 0.0.0.0 dans ~/Documents/crate)"
+command -v qrencode > /dev/null && [[ -n "$IP" ]] && qrencode -t UTF8 -m 1 "http://$IP:5173/crate/"
+echo "moteur, a mettre dans l'onglet Set : http://${IP:-<ip>}:$PORT"
+if ls "$CACHE"/studio/*.json > /dev/null 2>&1; then
+  for j in "$CACHE"/studio/*.json; do echo "JSON du set a importer : http://${IP:-<ip>}:8765/$(basename "$j")"; done
+  command -v qrencode > /dev/null && [[ -n "$IP" ]] && qrencode -t UTF8 -m 1 "http://$IP:8765/$(basename "$(ls "$CACHE"/studio/*.json | head -1)")"
+fi
+echo
 
 # 1. Toutes les paires, telles quelles, dans l'ordre exact de la source : c'est
 #    l'enregistrement qu'on ramene.
@@ -215,6 +250,7 @@ arreter() {
   kill -TERM "$MOTEUR" 2>/dev/null; wait "$MOTEUR" 2>/dev/null       # il cesse d'ecrire dans l'anneau
   [[ -n "${PAK:-}" ]] && { kill -TERM "$PAK" 2>/dev/null; wait "$PAK" 2>/dev/null; }   # il vide son tampon
   kill -INT "$ENREG" 2>/dev/null; wait "$ENREG" 2>/dev/null         # parecord ferme le WAV
+  kill "$JSON_SERVEUR" 2>/dev/null
   echo "ramene : $(ls "$DIR")"
 }
 trap arreter EXIT
@@ -232,6 +268,7 @@ dotnet "$PROBE_DLL" enregistre "$DIR/$SESSION.pak" > "$DIR/$SESSION-pak.log" 2>&
 PAK=$!
 
 echo "fenetre — autres terminaux : ./outils/terrain.sh $SESSION (notes) · ./outils/cue.sh $SESSION <bpm> [cle] (fiche) · ./outils/cue.sh $SESSION take"
+echo "ATTENTION : Q dans la fenetre (ou Ctrl-C ici) termine TOUTE la session — moteur, .pak, WAV."
 if [[ "${STUDIO_SANS_FENETRE:-}" == "1" ]]; then
   # Repetition sans ecran : tout tourne, Ctrl-C (ou TERM) arrete dans l'ordre.
   echo "sans fenetre : Ctrl-C pour arreter"; sleep infinity &
