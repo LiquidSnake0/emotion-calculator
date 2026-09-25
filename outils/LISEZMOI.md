@@ -314,7 +314,11 @@ le moteur (`run.sh fichier`), le `.pak` rejoue le rendu (`probe rejoue`, ou `rej
 d'emotion-renderer).
 
 `STUDIO_SOURCE=<source>` permet de répéter chez soi sur une autre entrée (deux canaux : une
-seule paire, `STUDIO_MASTER=1 STUDIO_CUE=1`).
+seule paire, `STUDIO_MASTER=1 STUDIO_CUE=1 STUDIO_ALTERNANCE=0`), et `STUDIO_SANS_FENETRE=1`
+répète sans écran.
+
+`master.sh <session> [paire]` sort une paire du WAV multipiste en stéréo 24 bits 48 kHz, telle
+quelle (le Rec Out par défaut) : le second master du set, et ce que `run.sh fichier` rejoue.
 
 ## `fiches_rekordbox.py` — les fiches d'une clé USB
 
