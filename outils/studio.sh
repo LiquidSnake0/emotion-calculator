@@ -246,6 +246,9 @@ env ASPNETCORE_URLS="http://0.0.0.0:$PORT" Signal__JournalDeck="$DIR/$SESSION-de
 MOTEUR=$!
 
 arreter() {
+  # Un second Ctrl-C pendant le rangement ne doit pas l'interrompre a moitie : a partir
+  # d'ici on ne repond plus aux signaux, on finit.
+  trap '' INT TERM
   echo; echo "arret"
   kill -TERM "$MOTEUR" 2>/dev/null; wait "$MOTEUR" 2>/dev/null       # il cesse d'ecrire dans l'anneau
   [[ -n "${PAK:-}" ]] && { kill -TERM "$PAK" 2>/dev/null; wait "$PAK" 2>/dev/null; }   # il vide son tampon
