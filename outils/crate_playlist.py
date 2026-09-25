@@ -11,7 +11,9 @@
 # titre viennent du chemin du fichier ; le BPM de la grille rekordbox ; `anchorBpm` = le
 # BPM natif, à corriger dans le crate s'il le joue ailleurs ; la famille reste à lui —
 # absente, l'axe couleur vaut 0,5 pour tout le monde, ni favorisé ni exclu.
-# La clé (Camelot) n'est là que si export.pdb a pu être lu (rekordbox-pdb).
+# Le titre et la clé (Camelot) viennent d'export.pdb (outils/rekordbox_pdb.py).
+# `anchorBpm` : le BPM auquel il compte le jouer (ANCHOR=92 par défaut) ; c'est de lui que
+# le crate déduit la clé transposée (deriveTag : un demi-ton = sept crans sur la roue).
 import json, os, re, sys
 from pathlib import Path
 
@@ -42,18 +44,20 @@ def main():
     tracks, manquants = [], []
     for v in voulus:
         mots = v.lower().split()
-        trouves = [f for f in fiches if all(m in f["chemin"].lower() for m in mots)]
+        trouves = [f for f in fiches if all(m in (f["chemin"] + " " + (f.get("titre") or "")).lower() for m in mots)]
         if len(trouves) != 1:
             manquants.append((v, len(trouves))); continue
         f = trouves[0]; artiste, album, numero, titre = decouper(f["chemin"])
+        titre = f.get("titre") or titre
+        ancre = float(os.environ.get("ANCHOR", "92"))
         tracks.append({
             "id": slug(artiste, album, numero, titre),
             "artist": artiste, "album": album, "title": titre, "trackNumber": numero,
-            "key": f.get("camelot"), "bpm": f["bpm"], "anchorBpm": f["bpm"],
+            "key": f.get("camelot"), "bpm": f["bpm"], "anchorBpm": ancre,
             "side": None, "family": None, "durationSec": None, "artId": None, "bcUrl": None,
             "plIndex": None, "legacyTag": None, "notes": "clé usb, studio 26.09.2026", "audioId": None,
         })
-        print(f"  {f['bpm']:7.2f}  {artiste} — {titre}")
+        print(f"  {f['bpm']:7.2f} {f.get('camelot') or '--':>3}  {artiste} — {titre}")
     sortie.write_text(json.dumps({"tracks": tracks, "judgements": []}, ensure_ascii=False, indent=1))
     print(f"{len(tracks)} morceaux → {sortie}")
     for v, n in manquants:

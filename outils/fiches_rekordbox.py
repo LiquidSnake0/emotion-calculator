@@ -9,13 +9,21 @@
 # terrain qu'on aura jamais : le tempo battement par battement, et l'instant de chaque
 # temps, au millième. C'est contre elle qu'on jugera ce que le moteur entend.
 #
-# Le chemin du fichier est dans PPTH ; la tonalité, elle, n'est que dans export.pdb (lib
-# rekordbox-pdb, à installer à la main) — colonne « camelot » vide tant qu'on ne l'a pas.
+# Le chemin du fichier est dans PPTH ; le titre et la tonalité (Camelot) viennent
+# d'export.pdb, lu par outils/rekordbox_pdb.py et joint sur le chemin.
 # Écrit ~/.cache/emotion-emulator/rekordbox.json : un index, pas une œuvre.
 import json, os, sys, statistics
 from pathlib import Path
 
 def lire(cle: Path):
+    sys.path.insert(0, str(Path(__file__).parent))
+    from rekordbox_pdb import lire as lire_pdb
+    pdb = {}
+    try:
+        pistes, _ = lire_pdb(str(cle / "PIONEER" / "rekordbox" / "export.pdb"))
+        pdb = {p["chemin"]: p for p in pistes}
+    except (OSError, KeyError, ValueError) as e:
+        print(f"export.pdb illisible ({e}) : sans titres ni tonalités", file=sys.stderr)
     # Importee ici et pas en tete : pyrekordbox vit dans .venv-rekordbox, et le module doit
     # s'importer sans elle (le controle de fumee importe chaque outil avec le python du systeme).
     try:
@@ -32,14 +40,16 @@ def lire(cle: Path):
             print(f"  {dat.parent.name} : {e}", file=sys.stderr); continue
         if not grille: continue
         tempos = [e.tempo / 100.0 for e in grille]
+        fiche = pdb.get(chemin, {})
         fiches.append({
             "chemin": chemin,
             "fichier": Path(chemin).name,
+            "titre": fiche.get("titre"),
             "bpm": round(statistics.median(tempos), 2),
             "bpm_min": min(tempos), "bpm_max": max(tempos),
             "premier_temps_ms": grille[0].time,
             "temps": len(grille),
-            "camelot": None,
+            "camelot": fiche.get("cle"),
             "analyse": str(dat.relative_to(cle)),
         })
     return fiches
@@ -57,8 +67,8 @@ def main():
         print(f"{len(fiches)} morceaux indexés → {cache}")
     if mots:
         for f in fiches:
-            if all(m in f["chemin"].lower() for m in mots):
-                print(f"{f['bpm']:7.2f} BPM  ({f['bpm_min']:.2f}–{f['bpm_max']:.2f}, {f['temps']} temps)  {f['chemin']}")
+            if all(m in (f["chemin"] + " " + (f.get("titre") or "")).lower() for m in mots):
+                print(f"{f['bpm']:7.2f} BPM  {f.get('camelot') or '--':>3}  ({f['bpm_min']:.2f}–{f['bpm_max']:.2f}, {f['temps']} temps)  {f.get('titre') or ''}  ·  {f['chemin']}")
     return 0
 
 if __name__ == "__main__": sys.exit(main())
