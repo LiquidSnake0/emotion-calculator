@@ -14,9 +14,14 @@
 # Écrit ~/.cache/emotion-emulator/rekordbox.json : un index, pas une œuvre.
 import json, os, sys, statistics
 from pathlib import Path
-from pyrekordbox import AnlzFile
 
 def lire(cle: Path):
+    # Importee ici et pas en tete : pyrekordbox vit dans .venv-rekordbox, et le module doit
+    # s'importer sans elle (le controle de fumee importe chaque outil avec le python du systeme).
+    try:
+        from pyrekordbox import AnlzFile
+    except ImportError:
+        sys.exit("pyrekordbox manque : lancer avec .venv-rekordbox/bin/python")
     fiches = []
     for dat in (cle / "PIONEER" / "USBANLZ").rglob("ANLZ0000.DAT"):
         try:

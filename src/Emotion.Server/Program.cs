@@ -320,10 +320,19 @@ static IAudioSource SourceDuSignal(IServiceProvider sp)
 
     // Seconde entree facultative : la sortie casque de la table. Sans elle, le systeme
     // fonctionne exactement comme avant et la transition reste commandee a la main.
+    //
+    // DEUX NOMS SEPARES PAR UNE VIRGULE, ET CE SONT LES VOIES DE LA TABLE : la premiere porte
+    // le cue au depart, et le cue passe sur l'autre a chaque relais (CueAlternant). Une table
+    // sur USB donne ses voies, jamais son casque.
     var cueDevice = cfg["Signal:CueDevice"];
     if (string.IsNullOrWhiteSpace(cueDevice)) return master;
 
-    return new DualAudioSource(master,
-        new PulseAudioSource(cueDevice, separate: cfg.GetValue("Signal:Separate", false),
-                             log: Dire));
+    var voies = cueDevice.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    var separer = cfg.GetValue("Signal:Separate", false);
+    IAudioSource cue = voies.Length >= 2
+        ? new CueAlternant(new PulseAudioSource(voies[0], separate: separer, log: Dire),
+                           new PulseAudioSource(voies[1], separate: separer, log: Dire), Dire)
+        : new PulseAudioSource(voies[0], separate: separer, log: Dire);
+    if (voies.Length >= 2) Dire($"cue alternant : voie 1 = {voies[0]}, voie 2 = {voies[1]}, le cue commence sur la 1");
+    return new DualAudioSource(master, cue);
 }

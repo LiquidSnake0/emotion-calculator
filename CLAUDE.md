@@ -2370,6 +2370,28 @@ le rang avec sa platine entier (« 5 P1 » tronqué de « 5 P1+P2 » dirait le c
 le harnais de rendu hors écran remplace `time.monotonic` par l'horloge des paquets, sans quoi
 le lissage ne bouge pas entre deux appels.
 
+## Le cue sur les voies de la table, et le relais qui ne se faisait qu'une fois
+
+Une DJM sur USB (la 750MK2 du studio, 26 septembre 2026) remonte chaque voie **avant son
+fader** et le Rec Out — jamais le casque. Le cue du moteur est donc la voie du deck qui se
+prépare, et le moteur sait laquelle sans rien mesurer : **avec deux platines, le cue est sur
+l'autre voie après chaque relais** (`CueAlternant`). Le crate dit quel disque est au casque
+(la fiche), la table dit sur quelle voie ; les deux ne se confondent pas. Un filet permute
+si la voie prise pour le cue est dans le master trois secondes hors relais — c'est le cas
+au départ quand on s'est trompé de sens, et jamais pendant un vrai fondu, qui monte depuis
+zéro avec le relais engagé avant 0,8. `Signal__CueDevice=djm_2,djm_1` : deux noms, la
+première porte le cue au départ.
+
+**En sortant les trois temps du relais de la boucle de lecture** (`MachineRelais`, neuf
+tests) un défaut est apparu : après le retrait, rien ne remettait la machine à zéro. Le
+premier passage de la soirée se relayait, les suivants passaient sans accueil ni retrait —
+un set n'avait droit qu'à un relais. `relais.py` ne fait qu'un fondu et ne pouvait pas le
+voir ; `Dix_disques_dix_relais` le garde. Le quatrième temps, **libre**, arrive quand le cue
+sort du mélange (< 0,1), c'est-à-dire quand un autre disque tourne au casque — pas avant,
+sinon le même disque serait accueilli deux fois.
+
+Le plan de la session, écrit avant elle avec les résultats attendus : `docs/studio-2026-09-26.md`.
+
 ## Le contrôle de fumée, et pourquoi il a fallu l'écrire
 
 ```sh

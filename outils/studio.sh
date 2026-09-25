@@ -26,10 +26,13 @@ cd "$(dirname "$0")/.."
 
 CACHE="${EMOTION_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/emotion-emulator}"
 PORT=5099
-# Quelle paire est le master, quelle paire est le cue (1 a 5). Le DJ joue sur les voies 1 et
-# 2 : la 1 joue, la 2 se prepare. Si c'est l'inverse au studio, on echange ici.
+# Quelle paire est le master, quelle paire porte le cue au depart (1 a 5). Le DJ joue sur
+# les voies 1 et 2 : le premier disque joue sur la 1, le premier prepare est sur la 2. Le cue
+# passe ensuite sur l'autre voie a chaque relais (CueAlternant) ; si le sens de depart est
+# faux, le filet permute en trois secondes. STUDIO_CUE=1 si le set commence sur la voie 2.
 MASTER_PAIRE="${STUDIO_MASTER:-5}"
 CUE_PAIRE="${STUDIO_CUE:-2}"
+AUTRE_VOIE=$(( CUE_PAIRE == 1 ? 2 : 1 ))
 
 # --- la table ------------------------------------------------------------------------------
 
@@ -148,7 +151,7 @@ pactl list sources short | grep -q "djm_$MASTER_PAIRE" || { echo "pas de paire $
 
 NCH=$(canaux_de_la_source | tr ',' '\n' | grep -c .)
 echo "session $SESSION → $DIR"
-echo "table : $SOURCE, $NCH canaux · master djm_$MASTER_PAIRE · cue djm_$CUE_PAIRE${BPM:+ · fiche $BPM BPM}${CLE:+ · $CLE}"
+echo "table : $SOURCE, $NCH canaux · master djm_$MASTER_PAIRE · cue djm_$CUE_PAIRE puis alternance avec djm_$AUTRE_VOIE${BPM:+ · fiche $BPM BPM}${CLE:+ · $CLE}"
 
 # 1. Toutes les paires, telles quelles : c'est l'enregistrement qu'on ramene.
 parecord --device="$SOURCE" --file-format=wav --channels="$NCH" --format=s24le --rate=48000 \
@@ -156,7 +159,7 @@ parecord --device="$SOURCE" --file-format=wav --channels="$NCH" --format=s24le -
 ENREG=$!
 
 # 2. Le moteur, master sur une paire, cue sur l'autre.
-env Signal__Source=pulse Signal__Device="djm_$MASTER_PAIRE" Signal__CueDevice="djm_$CUE_PAIRE" \
+env Signal__Source=pulse Signal__Device="djm_$MASTER_PAIRE" Signal__CueDevice="djm_$CUE_PAIRE,djm_$AUTRE_VOIE" \
     ${BPM:+Signal__Bpm="$BPM"} ${CLE:+Signal__Camelot="$CLE"} \
     dotnet run -c Release --project src/Emotion.Server > "$DIR/$SESSION-moteur.log" 2>&1 &
 MOTEUR=$!
@@ -174,5 +177,5 @@ for _ in $(seq 1 60); do
 done
 ss -lptnH "sport = :$PORT" 2>/dev/null | grep -q LISTEN || { echo "le moteur n'a pas demarre : voir $DIR/$SESSION-moteur.log" >&2; exit 1; }
 
-echo "fenetre — dans un autre terminal : ./outils/terrain.sh $SESSION pour noter les disques"
+echo "fenetre — autres terminaux : ./outils/terrain.sh $SESSION (notes) · ./outils/cue.sh $SESSION <bpm> [cle] (fiche) · ./outils/cue.sh $SESSION take"
 python3 outils/fenetre.py "$SESSION" 2>&1 | tee -a "$CACHE/fenetre.log"

@@ -295,7 +295,15 @@ rejouera à la maison depuis le WAV multipiste, où l'on a toutes les voies avan
 master, donc la position réelle de chaque fader par différence.
 
 Chaque paire devient une source PulseAudio stéréo (`djm_1` … `djm_5`, `module-remap-source`),
-le moteur lit `djm_5` en master et `djm_2` en cue par `parec`, comme toujours.
+le moteur lit `djm_5` en master, et **les deux voies en cue** (`Signal__CueDevice=djm_2,djm_1`) :
+`CueAlternant` porte le cue sur la première, le passe sur l'autre après chaque relais, et
+permute de lui-même si la voie qu'il croit être le cue est dans le master trois secondes
+(le filet). Le journal du moteur dit chaque bascule et pourquoi.
+
+`cue.sh <session> <bpm> [camelot] [titre]` pousse la fiche du disque posé au casque
+(`/deck/cue`), `cue.sh <session> take` dit qu'il est passé ; les deux sont notés dans les
+notes de la session. C'est ce que le crate fera par un `fetch` un jour ; aujourd'hui il ne
+parle pas au moteur. Le plan de la session et ses cas de test : `docs/studio-2026-09-26.md`.
 
 Ce qu'on ramène dans `~/.cache/emotion-emulator/studio/<session>/` : le WAV de toutes les
 paires (24 bits, 48 kHz, ~1,4 Mo/s pour dix canaux), le `.pak` de chaque image écrite dans

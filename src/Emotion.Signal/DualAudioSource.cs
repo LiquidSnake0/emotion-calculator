@@ -45,31 +45,11 @@ public sealed class DualAudioSource : IAudioSource
     private readonly Lock _cueGate = new();
 
     /// <summary>
-    /// A quel niveau de fondu le relais se fait. A mi-chemin : plus tot, le morceau qui
-    /// arrive ne domine pas encore et le master se calerait sur ce qui va disparaitre ;
-    /// plus tard, on aurait laisse passer le moment ou l'aide sert.
+    /// Les trois temps du relais — accueil, tempo, retrait — et le quatrieme, libre, qui
+    /// permet au suivant. Les seuils et l'enchainement vivent dans la machine, ou ils se
+    /// testent ; ici on ne fait qu'executer l'etape qu'elle rend.
     /// </summary>
-    private const float HandoverAt = 0.5f;
-
-    /// <summary>
-    /// LE RELAIS COMPLET, EN TROIS TEMPS, AU RYTHME DU FADER.
-    ///
-    ///   accueil   des que le disque qui entre s'entend dans le melange, ses gabarits, ses
-    ///             motifs et son caractere rejoignent ceux du disque qui joue dans le suivi
-    ///             du master. Deux portraits, un seul suivi : l'image suit le fondu.
-    ///   tempo     a mi-fondu, comme avant : le master reprend le tempo appris au cue.
-    ///   retrait   quand le fondu est fini, le disque qui sortait est retire du suivi, celui
-    ///             qui est entre devient le disque qui joue, et le cue se remet a zero pour
-    ///             le disque suivant.
-    ///
-    /// Le master ne forme jamais de portrait lui-meme : il ne fait que suivre ce qu'on lui
-    /// transmet, et mesurer ce qui a bouge — le pitch, les niveaux.
-    /// </summary>
-    private const float AccueilAt = 0.15f;
-    private const float RetraitAt = 0.9f;
-
-    private int _phase;   // 0 rien, 1 accueilli, 2 tempo relaye, 3 retire
-    private bool _handedOver;
+    private readonly MachineRelais _relais = new();
 
     /// <summary>
     /// La derniere analyse du cue : tempo, harmonie, registres du disque en preparation.
@@ -118,12 +98,11 @@ public sealed class DualAudioSource : IAudioSource
     public void ResetBlend()
     {
         _blend.Reset();
-        _handedOver = false;
-        _phase = 0;
+        _relais.Reset();
     }
 
     /// <summary>Ou en est le relais, pour le journal et la sonde : 0 rien, 1 accueilli, 2 tempo, 3 retire.</summary>
-    public int Phase => _phase;
+    public int Phase => _relais.Phase;
 
     public async IAsyncEnumerable<VisualFrame> ReadAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
@@ -153,33 +132,38 @@ public sealed class DualAudioSource : IAudioSource
             {
                 var blend = _blend.Feed(frame.Bands, _lastCueBands);
 
-                // L'ACCUEIL : le disque qui entre s'entend, ses regles passent au master.
-                if (_phase == 0 && blend >= AccueilAt
-                    && _cue.Analyzer is { } ac0 && _master.Analyzer is { } am0 && ac0.Separation.Pret)
+                // LE FILET DU CUE ALTERNANT : si la voie qu'on prend pour le cue est en fait
+                // dans le master, on permute, et la mesure de fondu repart de zero — elle
+                // decrivait l'autre voie.
+                if (_cue is CueAlternant alternant && alternant.Observer(blend, _relais.EnCours))
                 {
-                    am0.Accueillir(ac0.Empreinte());
-                    _phase = 1;
+                    ResetBlend();
+                    blend = 0f;
                 }
 
-                // Le passage de relais du tempo, une seule fois par transition.
-                if (!_handedOver && blend >= HandoverAt)
+                var cue = CueFrame;
+                var cuePret = _cue.Analyzer is { } ac && _master.Analyzer is not null && ac.Separation.Pret;
+                var tempoDisponible = cue.Bpm is not null && _master is PulseAudioSource;
+                switch (_relais.Avancer(blend, cuePret, tempoDisponible))
                 {
-                    var cue = CueFrame;
-                    if (cue.Bpm is { } bpm && _master is PulseAudioSource p)
-                    {
-                        p.AdoptTempo(bpm, frame.T);
-                        _handedOver = true;
-                    }
-                    if (_phase == 1) _phase = 2;
-                }
+                    // L'ACCUEIL : le disque qui entre s'entend, ses regles passent au master.
+                    case MachineRelais.Etape.Accueil:
+                        _master.Analyzer!.Accueillir(_cue.Analyzer!.Empreinte());
+                        break;
 
-                // LE RETRAIT : le fondu est fini, le disque qui sortait quitte le suivi et le
-                // cue est libre pour le suivant.
-                if (_phase is 1 or 2 && blend >= RetraitAt && _master.Analyzer is { } am3)
-                {
-                    am3.Retirer();
-                    _cue.NewTrack();
-                    _phase = 3;
+                    // Le passage de relais du tempo, une seule fois par transition.
+                    case MachineRelais.Etape.Tempo:
+                        ((PulseAudioSource)_master).AdoptTempo(cue.Bpm!.Value, frame.T);
+                        break;
+
+                    // LE RETRAIT : le fondu est fini, le disque qui sortait quitte le suivi et
+                    // le cue est libre pour le suivant. Un cue alternant change de voie ici :
+                    // la mesure de fondu decrivait l'ancienne, elle repart.
+                    case MachineRelais.Etape.Retrait:
+                        _master.Analyzer?.Retirer();
+                        _cue.NewTrack();
+                        if (_cue is CueAlternant) _blend.Reset();
+                        break;
                 }
 
                 // PENDANT LE FONDU, LE MASTER SUIT MAIS N'APPREND PLUS.
