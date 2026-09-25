@@ -4,6 +4,30 @@ namespace Emotion.Signal.Tests;
 
 public class SharedRingTests : IDisposable
 {
+    /// <summary>
+    /// Un serveur relance recree l'anneau a zero dans le meme fichier. Un lecteur ouvert
+    /// pendant la soiree precedente doit suivre le nouveau compteur, pas attendre qu'il
+    /// rattrape l'ancien.
+    /// </summary>
+    [Fact]
+    public void Un_lecteur_suit_un_producteur_qui_repart_de_zero()
+    {
+        var chemin = Path.Combine(Path.GetTempPath(), "emotion-anneau-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using (var ancien = new SharedRingWriter(chemin))
+                for (var i = 0; i < 500; i++) { var p = new GpuPacket { Sequence = (uint)i }; ancien.Write(in p); }
+            using var lecteur = new SharedRingReader(chemin);
+            Assert.False(lecteur.TryRead(out _));                       // rien de neuf
+            using var nouveau = new SharedRingWriter(chemin);            // repart a zero
+            var neuf = new GpuPacket { Sequence = 4242 };
+            nouveau.Write(in neuf);
+            Assert.True(lecteur.TryRead(out var lu));
+            Assert.Equal(4242u, lu.Sequence);
+        }
+        finally { File.Delete(chemin); }
+    }
+
     private readonly string _path = Path.Combine(
         Path.GetTempPath(), $"emotion-ring-{Guid.NewGuid():N}");
 

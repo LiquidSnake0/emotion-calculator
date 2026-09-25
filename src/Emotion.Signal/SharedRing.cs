@@ -202,6 +202,12 @@ public sealed unsafe class SharedRingReader : IDisposable
                 _read = w - _capacity + 1;
             }
 
+            // LE PRODUCTEUR A REDEMARRE. Un serveur relance recree l'anneau et repart a zero
+            // dans le meme fichier ; un lecteur ouvert sur l'ancien compteur attendrait que le
+            // nouveau le rattrape — toute une soiree. On reprend depuis le debut de ce qu'il
+            // a ecrit, ou depuis le plus ancien encore valide.
+            if (w < _read) _read = w < _capacity ? 0 : w - _capacity + 1;
+
             if (_read >= w)
             {
                 packet = default;

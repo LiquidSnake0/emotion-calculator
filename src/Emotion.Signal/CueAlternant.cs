@@ -127,6 +127,10 @@ public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
             }, stop.Token);
         }
 
+        // Quand les deux voies se sont tues — parec absent, peripheriques disparus — le flux
+        // se termine au lieu d'attendre en silence.
+        _ = Task.WhenAll(lectures).ContinueWith(_ => file.Writer.TryComplete(), TaskScheduler.Default);
+
         try
         {
             await foreach (var f in file.Reader.ReadAllAsync(stop.Token))

@@ -36,6 +36,10 @@ public sealed class DeckJournal
             verbe,
             corps,
         });
-        lock (_verrou) File.AppendAllText(_chemin, ligne + "\n");
+        // Un journal qui ne s'ecrit pas ne doit jamais faire echouer la commande : le geste
+        // du DJ passe, la ligne manque, et c'est le journal du serveur qui le dit.
+        try { lock (_verrou) File.AppendAllText(_chemin, ligne + "\n"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        { Console.Error.WriteLine($"journal deck : {e.Message}"); }
     }
 }

@@ -45,6 +45,17 @@ def lire(chemin):
     cles = {}
     for r in lignes(b, len_page, *tables[5]):
         kid, = struct.unpack_from('<I', b, r); cles[kid] = chaine(b, r + 8)
+    # Les listes de lecture : l'arbre (type 7) et leurs entrees (type 8), dans l'ordre.
+    listes = {}
+    for r in lignes(b, len_page, *tables[7]):
+        parent, _, ordre, lid, dossier = struct.unpack_from('<IIIII', b, r)
+        listes[lid] = {'id': lid, 'nom': chaine(b, r + 20), 'dossier': bool(dossier), 'parent': parent, 'pistes': []}
+    entrees = []
+    for r in lignes(b, len_page, *tables[8]):
+        rang, tid, lid = struct.unpack_from('<III', b, r)
+        entrees.append((lid, rang, tid))
+    for lid, rang, tid in sorted(entrees):
+        if lid in listes: listes[lid]['pistes'].append(tid)
     pistes = []
     for r in lignes(b, len_page, *tables[0]):
         key_id, = struct.unpack_from('<I', b, r + 32)
@@ -53,9 +64,11 @@ def lire(chemin):
         ofs = struct.unpack_from('<21H', b, r + 0x5E)
         titre = chaine(b, r + ofs[17]); chemin_f = chaine(b, r + ofs[20])
         pistes.append({'id': tid, 'titre': titre, 'chemin': chemin_f, 'bpm': tempo / 100, 'cle': cles.get(key_id)})
-    return pistes, cles
+    return pistes, cles, listes
 if __name__ == '__main__':
-    pistes, cles = lire(sys.argv[1])
+    pistes, cles, listes = lire(sys.argv[1])
+    for l in listes.values():
+        if not l['dossier']: print(f"  liste « {l['nom']} » : {len(l['pistes'])} pistes")
     print(len(pistes), 'pistes,', len(cles), 'tonalites :', sorted(set(cles.values()))[:30])
     for p in pistes[:5]: print(p)
     import collections; print(collections.Counter(p['cle'] for p in pistes).most_common(8))

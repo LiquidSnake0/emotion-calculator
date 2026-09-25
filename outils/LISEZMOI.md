@@ -327,5 +327,7 @@ Les morceaux joués sur clé ne sont pas dans le crate, mais rekordbox les a ana
 grille de temps (`PQTZ` des fichiers `ANLZ0000.DAT`) donne le tempo battement par battement
 et l'instant de chaque temps. C'est la vérité terrain du tempo, meilleure qu'une fiche. Index
 dans `~/.cache/emotion-emulator/rekordbox.json` (1 943 morceaux sur la clé du 25 septembre
-2026). La tonalité n'est que dans `export.pdb` : lib `rekordbox-pdb` (GitHub, pas sur PyPI) à
-installer dans `.venv-rekordbox` ; colonne `camelot` vide en attendant.
+2026). Le titre et la tonalité (Camelot) viennent d'`export.pdb`, lu par
+`outils/rekordbox_pdb.py` — un lecteur maison du format DeviceSQL, qui lit aussi les
+playlists de la clé. `crate_playlist.py` en fait le JSON à importer dans le crate (`SET=`
+le nom du set, écrit en tête des notes ; `plIndex` = le rang dans la liste).

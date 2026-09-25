@@ -4,9 +4,10 @@
 #   ./outils/cue.sh <session> <bpm> [camelot] [titre]      le disque cale au casque
 #   ./outils/cue.sh <session> take                         il vient de passer en salle
 #
-# LE CRATE NE PARLE PAS ENCORE AU MOTEUR : aucun fetch vers /deck dans son code. Au studio,
-# la fiche part donc d'ici, a la main, au moment ou le disque est pose. Le moteur sait alors
-# QUEL disque arrive (tempo, gamme) ; sur QUELLE voie, c'est le cue alternant qui le sait.
+# LE PLAN B DU CRATE. Le crate envoie lui-meme la fiche depuis ses ecrans Set et Live ; si
+# le telephone ne joint pas le moteur, elle part d'ici, a la main, au moment ou le disque
+# est pose. Le moteur sait alors QUEL disque arrive (tempo, gamme) ; sur QUELLE voie, c'est
+# le cue alternant qui le sait.
 # Chaque commande est aussi notee dans les notes de la session, a l'heure de la machine :
 # la fiche fait partie de la verite terrain.
 set -uo pipefail
@@ -25,7 +26,7 @@ if [[ "${1:-}" == "take" ]]; then
   exit 0
 fi
 
-BPM="${1:?bpm}"; CLE="${2:-}"; TITRE="${3:-disque}"
+BPM="${1:?bpm}"; BPM="${BPM/,/.}"; CLE="${2:-}"; TITRE="${3:-disque}"
 JSON=$(printf '{"title":"%s","disc":"cle usb","side":"","camelot":"%s","family":"","colorHex":"#6E6E6E","bpm":%s}' \
        "${TITRE//\"/}" "$CLE" "$BPM")
 curl -s -X POST "localhost:$PORT/deck/cue" -H 'Content-Type: application/json' -d "$JSON" \

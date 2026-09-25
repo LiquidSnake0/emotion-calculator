@@ -5,6 +5,7 @@
 #   ./outils/studio.sh                          ce que la machine voit (table, paires, options)
 #   ./outils/studio.sh --verif                  3 s par paire : qui porte du signal
 #   ./outils/studio.sh <session> [bpm] [camelot]   la session : enregistre, analyse, montre
+#   STUDIO_ALTERNANCE=0 …                       plan B : un cue fixe sur STUDIO_CUE, sans alternance
 #
 # LA TABLE EST UNE DJM-750MK2, ET LE NOYAU LA CONNAIT (quirk depuis Linux 5.14) : cinq paires
 # stereo remontent par USB, choisies depuis l'ordinateur par des commutateurs ALSA. Paire k
@@ -21,7 +22,9 @@
 #   <session>-terrain.tsv  les notes du DJ (outils/terrain.sh), a l'heure de la machine
 # Le WAV rejoue le moteur a volonte (run.sh fichier), le .pak rejoue le rendu (probe rejoue).
 #
-# Ctrl-C arrete tout, dans l'ordre : fenetre, moteur, enregistreurs.
+# Ctrl-C arrete tout, dans l'ordre : fenetre, moteur (il cesse d'ecrire), enregistreur de
+# l'anneau (il vide son tampon), enregistreur du WAV. Les deux programmes .NET sont
+# construits en tete et lances par leur DLL : ce sont leurs vrais pid qu'on tient.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,7 +36,10 @@ PORT=5099
 # faux, le filet permute en trois secondes. STUDIO_CUE=1 si le set commence sur la voie 2.
 MASTER_PAIRE="${STUDIO_MASTER:-5}"
 CUE_PAIRE="${STUDIO_CUE:-2}"
+[[ "$CUE_PAIRE" =~ ^[1-5]$ ]] || { echo "STUDIO_CUE doit valoir 1 a 5, pas « $CUE_PAIRE »" >&2; exit 2; }
 AUTRE_VOIE=$(( CUE_PAIRE == 1 ? 2 : 1 ))
+ALTERNANCE="${STUDIO_ALTERNANCE:-1}"
+ANNEAU=/dev/shm/emotion-emulator
 
 # --- la table ------------------------------------------------------------------------------
 
@@ -55,17 +61,32 @@ canaux_de_la_source() {
     trouve && $1=="Channel" && $2=="Map:" { print $3; exit }'
 }
 
+# LE NOM DU COMMUTATEUR DEPEND DU NOYAU : « Ch1 Input » sur ce 6.1, « Input 1 Capture
+# Switch » dans les noyaux plus recents. On cherche celui qui existe, et on imprime la
+# liste reelle pour ne jamais deviner sur place.
+ctl() {
+  local k="$1"
+  amixer -c "$CARTE" scontrols 2>/dev/null | grep -oE "'(Ch$k Input|Input $k Capture Switch)'" | head -1 | tr -d "'"
+}
 commutateurs() {
   [[ -n "$CARTE" ]] || return 0
+  echo "commutateurs ALSA de la carte $CARTE :"; amixer -c "$CARTE" scontrols | sed 's/^/    /'
   for k in 1 2 3 4 5; do
-    amixer -c "$CARTE" sget "Input $k Capture Switch" 2>/dev/null | awk -v k="$k" '
+    local c; c=$(ctl "$k"); [[ -n "$c" ]] || { echo "  paire $k : aucun commutateur trouve"; continue; }
+    amixer -c "$CARTE" sget "$c" | awk -v k="$k" '
       /Items:/ { sub(/.*Items: /, ""); items=$0 }
       /Item0:/ { sub(/.*Item0: /, ""); print "  paire " k " : " $0 "     (choix : " items ")" }'
   done
 }
 
-# Choisit l'option d'un commutateur par son nom exact, tel qu'amixer le liste.
-regler() { amixer -c "$CARTE" -q sset "Input $1 Capture Switch" "$2" 2>/dev/null; }
+# Choisit l'option d'un commutateur par son nom exact, tel qu'amixer le liste. Les erreurs
+# s'affichent : un reglage qui echoue en silence, c'est une paire muette qu'on decouvre
+# apres le set.
+regler() {
+  local c; c=$(ctl "$1")
+  [[ -n "$c" ]] || { echo "paire $1 : pas de commutateur sur la carte $CARTE" >&2; return 1; }
+  amixer -c "$CARTE" -q sset "$c" "$2" || echo "paire $1 : « $2 » refuse" >&2
+}
 
 # Ce que la paire k doit porter : sa voie telle qu'elle entre, sauf la cinquieme, le Rec Out.
 # Pour la voie, trois entrees possibles (LINE, CD/LINE, DIGITAL) selon ce qui est branche :
@@ -124,7 +145,7 @@ if [[ "$1" == "--verif" ]]; then
         n=$(niveau "djm_$k" 2); db=$(echo "$n" | awk '{print $1}')
         echo "  paire $k, $opt : $n"
         if [[ "$db" != "rien" ]] && awk -v a="$db" -v b="$fort" 'BEGIN { exit !(a > b) }'; then fort="$db"; meilleur="$opt"; fi
-      done < <(amixer -c "$CARTE" sget "Input $k Capture Switch" | awk '/Items:/ { sub(/.*Items: /, ""); gsub(/'"'"' '"'"'/, "\n"); gsub(/'"'"'/, ""); print }')
+      done < <(amixer -c "$CARTE" sget "$(ctl "$k")" | awk '/Items:/ { sub(/.*Items: /, ""); gsub(/'"'"' '"'"'/, "\n"); gsub(/'"'"'/, ""); print }')
       [[ -n "$meilleur" ]] && { regler "$k" "$meilleur"; echo "  paire $k → $meilleur"; }
     done
     regler 5 "Rec Out"
@@ -140,40 +161,64 @@ fi
 SESSION="$1"; BPM="${2:-}"; CLE="${3:-}"
 [[ -n "$SOURCE" ]] || { echo "aucune table vue par PulseAudio : brancher l'USB, puis ./outils/studio.sh" >&2; exit 1; }
 DIR="$CACHE/studio/$SESSION"; mkdir -p "$DIR"
+
+# Construire d'abord : un « dotnet run » compile pendant trente secondes au moment ou tout
+# le reste attend, et cache le vrai processus derriere lui.
+{ dotnet build -c Release -nologo -v q src/Emotion.Server && dotnet build -c Release -nologo -v q tools/Emotion.Probe; } > "$DIR/$SESSION-build.log" 2>&1 \
+  || { echo "la construction a echoue : voir $DIR/$SESSION-build.log" >&2; exit 1; }
+SERVEUR_DLL=$(ls src/Emotion.Server/bin/Release/net*/Emotion.Server.dll | head -1)
+PROBE_DLL=$(ls tools/Emotion.Probe/bin/Release/net*/Emotion.Probe.dll | head -1)
+
 for pid in $(ss -lptnH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
   [[ "$(ps -p "$pid" -o comm= 2>/dev/null)" == *Emotion.Server* ]] && kill "$pid" 2>/dev/null
 done
 pkill -f "Emotion.Probe.*(rejoue|enregistre)" 2>/dev/null
+sleep 0.5
+# L'ANNEAU D'UNE SESSION PRECEDENTE FAIT UN .pak VIDE : un lecteur qui l'ouvre part de son
+# vieux compteur et attend que le nouveau serveur le rattrape. On l'efface, le serveur
+# le recree.
+rm -f "$ANNEAU"
 
-# Les paires, si --verif ne les a pas deja posees.
+# Les paires, si --verif ne les a pas deja posees — et les trois qui servent doivent exister.
 pactl list sources short | grep -q "djm_$MASTER_PAIRE" || { retirer_remaps; for k in 1 2 3 4 5; do remap "$k" 2>/dev/null || true; done; }
-pactl list sources short | grep -q "djm_$MASTER_PAIRE" || { echo "pas de paire $MASTER_PAIRE sur cette source" >&2; exit 1; }
+PAIRES_UTILES="$MASTER_PAIRE $CUE_PAIRE"; [[ "$ALTERNANCE" == "1" ]] && PAIRES_UTILES="$PAIRES_UTILES $AUTRE_VOIE"
+for p in $PAIRES_UTILES; do
+  pactl list sources short | grep -q "djm_$p" || { echo "pas de paire $p sur cette source (canaux : $(canaux_de_la_source))" >&2; exit 1; }
+done
 [[ -n "$CARTE" ]] && ! [[ "${STUDIO_GARDER_COMMUTATEURS:-}" ]] && regler 5 "Rec Out"
 
-NCH=$(canaux_de_la_source | tr ',' '\n' | grep -c .)
-IP=$(hostname -I | awk '{print $1}')
+CANAUX=$(canaux_de_la_source)
+NCH=$(echo "$CANAUX" | tr ',' '\n' | grep -c .)
+IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "src") print $(i + 1); exit }')
+CUE_DEVICES="djm_$CUE_PAIRE"; [[ "$ALTERNANCE" == "1" ]] && CUE_DEVICES="djm_$CUE_PAIRE,djm_$AUTRE_VOIE"
 echo "session $SESSION → $DIR"
-echo "crate sur le telephone : http://$IP:5173/crate/ (npm run dev -- --host 0.0.0.0 dans ~/Documents/crate) · moteur = http://$IP:$PORT"
-echo "table : $SOURCE, $NCH canaux · master djm_$MASTER_PAIRE · cue djm_$CUE_PAIRE puis alternance avec djm_$AUTRE_VOIE${BPM:+ · fiche $BPM BPM}${CLE:+ · $CLE}"
+echo "table : $SOURCE, $NCH canaux · master djm_$MASTER_PAIRE · cue $CUE_DEVICES${BPM:+ · fiche $BPM BPM}${CLE:+ · $CLE}"
+echo "crate sur le telephone : http://${IP:-<ip>}:5173/crate/ (npm run dev -- --host 0.0.0.0 dans ~/Documents/crate) · moteur = http://${IP:-<ip>}:$PORT"
 
-# 1. Toutes les paires, telles quelles : c'est l'enregistrement qu'on ramene.
-parecord --device="$SOURCE" --file-format=wav --channels="$NCH" --format=s24le --rate=48000 \
-         "$DIR/$SESSION-table.wav" 2> "$DIR/$SESSION-parecord.log" &
+# 1. Toutes les paires, telles quelles, dans l'ordre exact de la source : c'est
+#    l'enregistrement qu'on ramene.
+parecord --device="$SOURCE" --file-format=wav --channels="$NCH" --channel-map="$CANAUX" --no-remix \
+         --format=s24le --rate=48000 "$DIR/$SESSION-table.wav" 2> "$DIR/$SESSION-parecord.log" &
 ENREG=$!
 
-# 2. Le moteur, master sur une paire, cue sur l'autre.
+# 2. Le moteur, master sur une paire, cue sur l'autre (ou les deux voies en alternance).
+#    --no-launch-profile : sinon le profil de lancement impose localhost et le telephone ne
+#    joint jamais le moteur.
 env ASPNETCORE_URLS="http://0.0.0.0:$PORT" Signal__JournalDeck="$DIR/$SESSION-deck.jsonl" \
-    Signal__Source=pulse Signal__Device="djm_$MASTER_PAIRE" Signal__CueDevice="djm_$CUE_PAIRE,djm_$AUTRE_VOIE" \
+    Signal__Source=pulse Signal__Device="djm_$MASTER_PAIRE" Signal__CueDevice="$CUE_DEVICES" \
     ${BPM:+Signal__Bpm="$BPM"} ${CLE:+Signal__Camelot="$CLE"} \
-    dotnet run -c Release --project src/Emotion.Server > "$DIR/$SESSION-moteur.log" 2>&1 &
+    dotnet "$SERVEUR_DLL" > "$DIR/$SESSION-moteur.log" 2>&1 &
 MOTEUR=$!
 
-# 3. Ce que le rendu aurait recu, image par image.
-dotnet run -c Release --no-build --project tools/Emotion.Probe -- enregistre "$DIR/$SESSION.pak" \
-    > "$DIR/$SESSION-pak.log" 2>&1 &
-PAK=$!
-
-trap 'echo; echo "arret"; kill $MOTEUR 2>/dev/null; sleep 1; kill -INT $PAK 2>/dev/null; kill -INT $ENREG 2>/dev/null; wait $PAK $ENREG 2>/dev/null; echo "ramene : $(ls "$DIR")"' EXIT INT TERM
+arreter() {
+  echo; echo "arret"
+  kill -TERM "$MOTEUR" 2>/dev/null; wait "$MOTEUR" 2>/dev/null       # il cesse d'ecrire dans l'anneau
+  [[ -n "${PAK:-}" ]] && { kill -TERM "$PAK" 2>/dev/null; wait "$PAK" 2>/dev/null; }   # il vide son tampon
+  kill -INT "$ENREG" 2>/dev/null; wait "$ENREG" 2>/dev/null         # parecord ferme le WAV
+  echo "ramene : $(ls "$DIR")"
+}
+trap arreter EXIT
+trap 'exit 130' INT TERM
 
 for _ in $(seq 1 60); do
   ss -lptnH "sport = :$PORT" 2>/dev/null | grep -q LISTEN && break
@@ -181,5 +226,16 @@ for _ in $(seq 1 60); do
 done
 ss -lptnH "sport = :$PORT" 2>/dev/null | grep -q LISTEN || { echo "le moteur n'a pas demarre : voir $DIR/$SESSION-moteur.log" >&2; exit 1; }
 
+# 3. Ce que le rendu aurait recu, image par image — lance une fois le moteur la, donc sur
+#    l'anneau neuf.
+dotnet "$PROBE_DLL" enregistre "$DIR/$SESSION.pak" > "$DIR/$SESSION-pak.log" 2>&1 &
+PAK=$!
+
 echo "fenetre — autres terminaux : ./outils/terrain.sh $SESSION (notes) · ./outils/cue.sh $SESSION <bpm> [cle] (fiche) · ./outils/cue.sh $SESSION take"
-python3 outils/fenetre.py "$SESSION" 2>&1 | tee -a "$CACHE/fenetre.log"
+if [[ "${STUDIO_SANS_FENETRE:-}" == "1" ]]; then
+  # Repetition sans ecran : tout tourne, Ctrl-C (ou TERM) arrete dans l'ordre.
+  echo "sans fenetre : Ctrl-C pour arreter"; sleep infinity &
+  wait $!
+else
+  python3 outils/fenetre.py "$SESSION" 2>&1 | tee -a "$CACHE/fenetre.log"
+fi

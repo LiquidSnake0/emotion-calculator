@@ -120,12 +120,13 @@ public class CueAlternantTests
         await foreach (var f in cue.ReadAsync(stop.Token))
         {
             if (cue.Voie == 1) { avant.Add(f.Rms); if (avant.Count == 20) cue.Basculer("test"); }
-            else { apres.Add(f.Rms); if (apres.Count >= 20) break; }
+            else { apres.Add(f.Rms); if (apres.Count >= 30) break; }
         }
         Assert.All(avant, r => Assert.Equal(1f, r));
         Assert.True(apres.Count >= 20);
-        // Les premieres images apres la bascule peuvent encore venir de la voie 1, deja dans
-        // la file ; ensuite, il n'y a plus que la 2.
-        Assert.All(apres.Skip(8), r => Assert.Equal(2f, r));
+        // Les premieres images apres la bascule peuvent encore venir de la voie 1 : huit deja
+        // dans la file, et une que sa tache avait lue juste avant de voir la bascule ; ensuite,
+        // il n'y a plus que la 2.
+        Assert.All(apres.Skip(10), r => Assert.Equal(2f, r));
     }
 }

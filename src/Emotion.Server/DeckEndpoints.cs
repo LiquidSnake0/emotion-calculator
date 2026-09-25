@@ -21,6 +21,7 @@ public static class DeckEndpoints
                                         TrackMemory memory, DeckJournal journal) =>
         {
             journal.Ecrire("cue", track);
+            var nouveauDisque = !string.Equals(deck.Current.Cued?.Title, track.Title, StringComparison.Ordinal);
             var next = deck.Apply(d => d.Cue(track));
 
             // Une face arrive au casque. Si c'est la meme qu'avant — l'aiguille repasse
@@ -33,6 +34,10 @@ public static class DeckEndpoints
             // justesse au lieu de 99). Elle ne verrouille rien : elle dit ou chercher.
             if (source is DualAudioSource dual)
             {
+                // Un autre disque vient d'etre pose au casque : l'analyseur de cette voie
+                // repart de zero (l'analyseur, pas le cue alternant, qui changerait de voie).
+                // Le meme disque repose — l'aiguille repasse — ne remet rien a zero.
+                if (nouveauDisque) dual.Cue.Analyzer?.NewTrack();
                 if (track.Bpm > 0f && dual.Cue is IAcceptsCue amorcable) amorcable.Amorcer(track.Bpm);
                 if (Gamme.Lire(track.Camelot) is not null) dual.Cue.Analyzer?.Gamme(track.Camelot);
             }

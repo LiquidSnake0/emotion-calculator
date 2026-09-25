@@ -108,6 +108,21 @@ public class MachineRelaisTests
         Assert.Equal(Etape.Libre, m.Avancer(0.05f, true, true));
     }
 
+    /// <summary>
+    /// Sans accueil, le tempo relaye suffit a dire qu'un vrai fondu est en cours : le filet
+    /// du cue alternant ne doit pas le prendre pour une erreur de voie.
+    /// </summary>
+    [Fact]
+    public void Un_tempo_relaye_sans_accueil_compte_comme_un_relais_en_cours()
+    {
+        var m = new MachineRelais();
+        Assert.False(m.EnCours);
+        m.Avancer(0.6f, false, true);
+        Assert.True(m.EnCours);
+        Assert.Equal(Etape.Libre, m.Avancer(0.05f, false, true));
+        Assert.False(m.EnCours);
+    }
+
     [Fact]
     public void Dix_disques_dix_relais()
     {

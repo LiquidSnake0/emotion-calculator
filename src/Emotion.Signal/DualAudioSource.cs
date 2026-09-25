@@ -144,7 +144,14 @@ public sealed class DualAudioSource : IAudioSource
                 var cue = CueFrame;
                 var cuePret = _cue.Analyzer is { } ac && _master.Analyzer is not null && ac.Separation.Pret;
                 var tempoDisponible = cue.Bpm is not null && _master is PulseAudioSource;
-                switch (_relais.Avancer(blend, cuePret, tempoDisponible))
+
+                // APRES LE RETRAIT, LA MESURE REPART DE ZERO ET NE VAUT RIEN PENDANT UNE
+                // SECONDE ET DEMIE : un zero de depart n'est pas « le cue est sorti du
+                // melange ». Tant que la fenetre n'est pas pleine, la machine ne se libere
+                // pas — sinon la voie nouvelle, qui porte encore le disque sortant, serait
+                // accueillie une seconde fois des que le DJ le ramene un peu.
+                var blendPourLaMachine = _relais.Phase == 3 && !_blend.Pret ? 1f : blend;
+                switch (_relais.Avancer(blendPourLaMachine, cuePret, tempoDisponible))
                 {
                     // L'ACCUEIL : le disque qui entre s'entend, ses regles passent au master.
                     case MachineRelais.Etape.Accueil:

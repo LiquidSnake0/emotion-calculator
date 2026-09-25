@@ -37,6 +37,9 @@ public sealed class BlendEstimator
     /// </summary>
     public float Blend => _smoothed;
 
+    /// <summary>La fenetre est pleine : la valeur decrit bien une seconde et demie, pas un depart a zero.</summary>
+    public bool Pret => _n >= History;
+
     /// <summary>
     /// Nourrit l'estimateur des deux profils de bandes de la meme instant.
     /// </summary>

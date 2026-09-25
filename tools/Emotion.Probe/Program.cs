@@ -27,13 +27,17 @@ if (args.Length < 1)
 // entree — la table du studio — et personne ne sait ce que le rendu aurait recu. On lit
 // l'anneau comme le renderer le fera et on garde chaque image, dans le meme format que
 // « paquets= » : le set se rejoue ensuite avec « probe rejoue », a la maison, autant de
-// fois qu'il faut. Ctrl-C arrete proprement ; le fichier est vide a la fin de chaque image.
+// fois qu'il faut. Ctrl-C ou SIGTERM arretent proprement ; le fichier est vide toutes les
+// soixante secondes et a l'arret.
 if (args[0] == "enregistre")
 {
     if (args.Length < 2) { Console.Error.WriteLine("probe enregistre <fichier.pak> [secondes]"); return 1; }
     var limite = args.Length > 2 ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : double.PositiveInfinity;
     var arret = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; arret.Cancel(); };
+    // Lance en arriere-plan par un script, c'est un SIGTERM qui arrive, pas un Ctrl-C.
+    using var surTerm = System.Runtime.InteropServices.PosixSignalRegistration.Create(
+        System.Runtime.InteropServices.PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; arret.Cancel(); });
 
     // Le serveur cree l'anneau ; on l'attend plutot que de tomber une seconde trop tot.
     SharedRingReader? lecteur = null;

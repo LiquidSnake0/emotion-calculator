@@ -20,7 +20,7 @@ def lire(cle: Path):
     from rekordbox_pdb import lire as lire_pdb
     pdb = {}
     try:
-        pistes, _ = lire_pdb(str(cle / "PIONEER" / "rekordbox" / "export.pdb"))
+        pistes, _, _ = lire_pdb(str(cle / "PIONEER" / "rekordbox" / "export.pdb"))
         pdb = {p["chemin"]: p for p in pistes}
     except (OSError, KeyError, ValueError) as e:
         print(f"export.pdb illisible ({e}) : sans titres ni tonalités", file=sys.stderr)

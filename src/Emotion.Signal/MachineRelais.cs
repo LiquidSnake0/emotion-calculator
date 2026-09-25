@@ -34,8 +34,12 @@ public sealed class MachineRelais
 
     private bool _tempoRelaye;
 
-    /// <summary>Un relais est engage : le disque qui entre est deja dans le suivi du master.</summary>
-    public bool EnCours => Phase is 1 or 2;
+    /// <summary>
+    /// Un relais est engage : le disque qui entre est deja dans le suivi du master, ou son
+    /// tempo a deja ete relaye sans accueil. Dans les deux cas le fondu en cours est un vrai
+    /// fondu, et rien ne doit le prendre pour une erreur de voie.
+    /// </summary>
+    public bool EnCours => Phase is 1 or 2 || (Phase == 0 && _tempoRelaye);
 
     public void Reset()
     {
@@ -62,7 +66,7 @@ public sealed class MachineRelais
             return Etape.Tempo;
         }
 
-        if (EnCours && blend >= RetraitAt)
+        if (Phase is 1 or 2 && blend >= RetraitAt)
         {
             Phase = 3;
             return Etape.Retrait;
