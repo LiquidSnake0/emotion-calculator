@@ -17,6 +17,7 @@
 #   <session>-table.wav    toutes les paires, 24 bits 48 kHz, telles que la table les donne
 #   <session>.pak          chaque image que le moteur a ecrite dans l'anneau (probe enregistre)
 #   <session>-moteur.log   le journal du serveur
+#   <session>-deck.jsonl   ce que le crate a dit au moteur (cue, take), a l'heure des images
 #   <session>-terrain.tsv  les notes du DJ (outils/terrain.sh), a l'heure de la machine
 # Le WAV rejoue le moteur a volonte (run.sh fichier), le .pak rejoue le rendu (probe rejoue).
 #
@@ -150,7 +151,9 @@ pactl list sources short | grep -q "djm_$MASTER_PAIRE" || { echo "pas de paire $
 [[ -n "$CARTE" ]] && ! [[ "${STUDIO_GARDER_COMMUTATEURS:-}" ]] && regler 5 "Rec Out"
 
 NCH=$(canaux_de_la_source | tr ',' '\n' | grep -c .)
+IP=$(hostname -I | awk '{print $1}')
 echo "session $SESSION → $DIR"
+echo "crate sur le telephone : http://$IP:5173/crate/ (npm run dev -- --host 0.0.0.0 dans ~/Documents/crate) · moteur = http://$IP:$PORT"
 echo "table : $SOURCE, $NCH canaux · master djm_$MASTER_PAIRE · cue djm_$CUE_PAIRE puis alternance avec djm_$AUTRE_VOIE${BPM:+ · fiche $BPM BPM}${CLE:+ · $CLE}"
 
 # 1. Toutes les paires, telles quelles : c'est l'enregistrement qu'on ramene.
@@ -159,7 +162,8 @@ parecord --device="$SOURCE" --file-format=wav --channels="$NCH" --format=s24le -
 ENREG=$!
 
 # 2. Le moteur, master sur une paire, cue sur l'autre.
-env Signal__Source=pulse Signal__Device="djm_$MASTER_PAIRE" Signal__CueDevice="djm_$CUE_PAIRE,djm_$AUTRE_VOIE" \
+env ASPNETCORE_URLS="http://0.0.0.0:$PORT" Signal__JournalDeck="$DIR/$SESSION-deck.jsonl" \
+    Signal__Source=pulse Signal__Device="djm_$MASTER_PAIRE" Signal__CueDevice="djm_$CUE_PAIRE,djm_$AUTRE_VOIE" \
     ${BPM:+Signal__Bpm="$BPM"} ${CLE:+Signal__Camelot="$CLE"} \
     dotnet run -c Release --project src/Emotion.Server > "$DIR/$SESSION-moteur.log" 2>&1 &
 MOTEUR=$!

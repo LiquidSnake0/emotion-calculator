@@ -38,6 +38,12 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters
     .Add(new JsonStringEnumConverter()));
 
 builder.Services.AddSingleton<DeckState>();
+builder.Services.AddSingleton<DeckJournal>();
+
+// LE CRATE EST UNE PAGE SUR LE TELEPHONE, ET LE MOTEUR UNE AUTRE MACHINE DU MEME RESEAU.
+// Un navigateur refuse ce fetch sans l'accord du serveur : on le donne a tout le monde,
+// parce que ce port n'est ouvert que sur un reseau prive et ne sert que des commandes.
+builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 // CE QUE LE SYSTEME APPREND VIT EN MEMOIRE, ET S'ARRETE AVEC LE DISQUE.
 //
@@ -70,6 +76,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<GpuSink>());
 // passe plus par le reseau du tout. Ce qui reste ouvert est l'API que le crate appelle,
 // et rien d'autre.
 var app = builder.Build();
+app.UseCors();
 
 // Les commandes venues du crate et du telephone : caler, basculer, renoncer.
 app.MapDeck();

@@ -18,8 +18,9 @@ public static class DeckEndpoints
         // Cale une face au casque. N'a aucun effet sur la projection : le public ne
         // doit pas voir le beatmatch commencer.
         app.MapPost("/deck/cue", async (TrackContext track, DeckState deck, IAudioSource source,
-                                        TrackMemory memory) =>
+                                        TrackMemory memory, DeckJournal journal) =>
         {
+            journal.Ecrire("cue", track);
             var next = deck.Apply(d => d.Cue(track));
 
             // Une face arrive au casque. Si c'est la meme qu'avant — l'aiguille repasse
@@ -32,8 +33,9 @@ public static class DeckEndpoints
         // La transition est faite : ce qui etait cale devient ce qui joue. C'est le
         // seul geste qui change la projection.
         app.MapPost("/deck/take", async (DeckState deck,
-                                         IAudioSource source, TrackMemory memory) =>
+                                         IAudioSource source, TrackMemory memory, DeckJournal journal) =>
         {
+            journal.Ecrire("take");
             var next = deck.Apply(d => d.Take());
 
             // L'ANALYSE DOIT APPRENDRE LE CHANGEMENT DE LA BASE, PAS DU SIGNAL.
@@ -69,8 +71,9 @@ public static class DeckEndpoints
 
         // Renoncement : la face calee est abandonnee.
         app.MapPost("/deck/drop", async (DeckState deck,
-                                         IAudioSource source, TrackMemory memory) =>
+                                         IAudioSource source, TrackMemory memory, DeckJournal journal) =>
         {
+            journal.Ecrire("drop");
             var next = deck.Apply(d => d.Drop());
 
             // Le vinyle est range : ce qu'on savait de lui part avec. Le garder ne servirait
@@ -82,8 +85,9 @@ public static class DeckEndpoints
         // Pose directement ce qui joue, sans passer par le casque. Sert au demarrage
         // d'un set et aux essais.
         app.MapPost("/deck/play", async (TrackContext track, DeckState deck, IAudioSource source,
-                                         TrackMemory memory) =>
+                                         TrackMemory memory, DeckJournal journal) =>
         {
+            journal.Ecrire("play", track);
             var next = deck.Apply(_ => new Deck(track, null));
             source.NewTrack();
             if (Master(source) is { } platine) memory.Play(track, platine);

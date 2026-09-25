@@ -138,8 +138,12 @@ public sealed class FrameBus
     /// </summary>
     public VisualFrame Latest { get; private set; }
 
+    /// <summary>L'horloge de la derniere image publiee : celle des paquets, pour dater ce qui vient d'ailleurs.</summary>
+    public long DerniereImageMs { get; private set; }
+
     public void Publish(in VisualFrame frame)
     {
+        DerniereImageMs = frame.T;
         Latest = frame;
 
         // Les consommateurs en ligne d'abord : ils sont sur le chemin critique, et rien

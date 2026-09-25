@@ -302,8 +302,10 @@ permute de lui-même si la voie qu'il croit être le cue est dans le master troi
 
 `cue.sh <session> <bpm> [camelot] [titre]` pousse la fiche du disque posé au casque
 (`/deck/cue`), `cue.sh <session> take` dit qu'il est passé ; les deux sont notés dans les
-notes de la session. C'est ce que le crate fera par un `fetch` un jour ; aujourd'hui il ne
-parle pas au moteur. Le plan de la session et ses cas de test : `docs/studio-2026-09-26.md`.
+notes de la session. C'est le plan B : **le crate le fait lui-même** depuis son onglet Set
+(BPM joué et clé transposée), et le moteur journalise chaque commande dans
+`<session>-deck.jsonl` (`Signal__JournalDeck`) avec `imageMs`, l'horloge des paquets. Le plan
+de la session et ses cas de test : `docs/studio-2026-09-26.md`.
 
 Ce qu'on ramène dans `~/.cache/emotion-emulator/studio/<session>/` : le WAV de toutes les
 paires (24 bits, 48 kHz, ~1,4 Mo/s pour dix canaux), le `.pak` de chaque image écrite dans
