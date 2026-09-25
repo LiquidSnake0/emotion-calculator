@@ -1,0 +1,22 @@
+# Les tests du moteur a chaque push : le coeur se teste sans carte son, sans serveur, sans
+# les disques. Ce qui touche a l'anneau partage passe par un fichier temporaire.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: construire
+        run: dotnet build -c Release -nologo -v q
+      - name: tests
+        run: dotnet test -c Release --no-build -nologo -v q --logger "console;verbosity=normal"
