@@ -27,6 +27,15 @@ public static class DeckEndpoints
             // pour verifier le tempo — rien n'est remis a zero : ce passage vient s'ajouter
             // aux precedents, et c'est la que le systeme apprend le plus.
             if (Cue(source) is { } casque) memory.Cue(track, casque);
+
+            // LA FICHE VA AU CASQUE, PAS SEULEMENT AU MASTER. C'est le cue qui apprend le
+            // disque qui arrive ; sans la fiche il cherche son tempo dans le vide (43 % de
+            // justesse au lieu de 99). Elle ne verrouille rien : elle dit ou chercher.
+            if (source is DualAudioSource dual)
+            {
+                if (track.Bpm > 0f && dual.Cue is IAcceptsCue amorcable) amorcable.Amorcer(track.Bpm);
+                if (Gamme.Lire(track.Camelot) is not null) dual.Cue.Analyzer?.Gamme(track.Camelot);
+            }
             return Results.Ok(next);
         });
 
@@ -64,7 +73,23 @@ public static class DeckEndpoints
             //
             // C'est le seul instant du systeme ou quoi que ce soit est recopie. Une
             // transition est un geste ; rien de ceci ne tourne pendant l'analyse.
-            if (Master(source) is { } platine) memory.Handover(next.Playing, platine, Cue(source));
+            //
+            // AVEC UNE VRAIE TABLE, C'EST LE RELAIS QUI TRANSPORTE — PAS CE GESTE. Le fondu
+            // mesure a deja fait passer les portraits du casque au master (accueil) et retire
+            // le disque sorti (retrait), au rythme du fader ; et le cue a pu changer de voie
+            // depuis. Recopier ici ce que « le cue » sait rangerait la connaissance d'une
+            // autre voie dans le master, et recentrerait son tempo sur un disque qui ne
+            // joue plus. Le geste ne fait alors que tenir les comptes, et donner au master
+            // la fiche du disque qui joue desormais.
+            if (Master(source) is { } platine)
+            {
+                var relaisParLeSignal = source is DualAudioSource;
+                memory.Handover(next.Playing, platine, relaisParLeSignal ? null : Cue(source));
+                if (relaisParLeSignal && next.Playing.Bpm > 0f && platine is IAcceptsCue amorcable)
+                    amorcable.Amorcer(next.Playing.Bpm);
+                if (relaisParLeSignal && Gamme.Lire(next.Playing.Camelot) is not null)
+                    source.Analyzer?.Gamme(next.Playing.Camelot);
+            }
 
             return Results.Ok(next);
         });
