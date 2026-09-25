@@ -274,3 +274,48 @@ lui-même, et c'est tout l'intérêt : les indicateurs internes du moteur compar
 à une grille calée sur ces mêmes frappes, donc un défaut commun aux deux leur est invisible.
 Il a fallu un métronome fabriqué, une implémentation écrite dans un autre langage, et les
 tempos que le DJ a calés lui-même, pour voir ce que le moteur ne pouvait pas voir seul.
+
+## `studio.sh` et `terrain.sh` — une session sur une vraie table
+
+```sh
+./outils/studio.sh                  # ce que la machine voit : carte, source, paires, commutateurs
+./outils/studio.sh --verif          # 3 s par paire, en dBFS ; choisit l'entree de chaque voie
+./outils/studio.sh <session> 88 8A  # enregistre, analyse en direct, montre ; fiche facultative
+./outils/terrain.sh <session>       # dans un autre terminal : une note par geste, a l'heure
+```
+
+La table est une **DJM-750MK2** sur USB, connue du noyau (quirk depuis Linux 5.14) : cinq
+paires stéréo remontent, et c'est l'ordinateur qui choisit ce que chacune porte, par les
+commutateurs ALSA `Input k Capture Switch`. La paire k ne porte que la voie k — son entrée
+telle quelle (« Control Tone LINE / CD/LINE / DIGITAL ») ou après le fader — et la cinquième
+le Rec Out, un côté du crossfader, le micro, ou une voie après fader. **Le casque ne passe
+pas par l'USB** : le cue du moteur est l'entrée brute d'une voie (`STUDIO_CUE=2` par défaut,
+le master est le Rec Out, `STUDIO_MASTER=5`). C'est dit tel quel : le relais complet se
+rejouera à la maison depuis le WAV multipiste, où l'on a toutes les voies avant fader et le
+master, donc la position réelle de chaque fader par différence.
+
+Chaque paire devient une source PulseAudio stéréo (`djm_1` … `djm_5`, `module-remap-source`),
+le moteur lit `djm_5` en master et `djm_2` en cue par `parec`, comme toujours.
+
+Ce qu'on ramène dans `~/.cache/emotion-emulator/studio/<session>/` : le WAV de toutes les
+paires (24 bits, 48 kHz, ~1,4 Mo/s pour dix canaux), le `.pak` de chaque image écrite dans
+l'anneau (`probe enregistre`, nouveau), le journal du moteur, les notes du DJ. Le WAV rejoue
+le moteur (`run.sh fichier`), le `.pak` rejoue le rendu (`probe rejoue`, ou `rejouer.sh`
+d'emotion-renderer).
+
+`STUDIO_SOURCE=<source>` permet de répéter chez soi sur une autre entrée (deux canaux : une
+seule paire, `STUDIO_MASTER=1 STUDIO_CUE=1`).
+
+## `fiches_rekordbox.py` — les fiches d'une clé USB
+
+```sh
+.venv-rekordbox/bin/python outils/fiches_rekordbox.py /run/media/swave/BF2C-F971          # indexe
+.venv-rekordbox/bin/python outils/fiches_rekordbox.py /run/media/swave/BF2C-F971 "ti faccio"
+```
+
+Les morceaux joués sur clé ne sont pas dans le crate, mais rekordbox les a analysés : la
+grille de temps (`PQTZ` des fichiers `ANLZ0000.DAT`) donne le tempo battement par battement
+et l'instant de chaque temps. C'est la vérité terrain du tempo, meilleure qu'une fiche. Index
+dans `~/.cache/emotion-emulator/rekordbox.json` (1 943 morceaux sur la clé du 25 septembre
+2026). La tonalité n'est que dans `export.pdb` : lib `rekordbox-pdb` (GitHub, pas sur PyPI) à
+installer dans `.venv-rekordbox` ; colonne `camelot` vide en attendant.

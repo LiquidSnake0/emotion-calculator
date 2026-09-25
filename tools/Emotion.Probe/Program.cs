@@ -19,7 +19,55 @@ if (args.Length < 1)
     Console.Error.WriteLine("          relaisA=<A.wav> relaisB=<B.wav> fondu=<t0>,<t1> cue=<s> · paquets=<fichier.pak>");
     Console.Error.WriteLine("          blend=<cueB aligne.wav> fader=<fichier.tsv>   — le fader tel que BlendEstimator le devine");
     Console.Error.WriteLine("       probe rejoue <fichier.pak> [vitesse]   — rejoue les paquets dans l'anneau partage");
+    Console.Error.WriteLine("       probe enregistre <fichier.pak> [secondes] — copie ce que le serveur ecrit dans l'anneau");
     return 1;
+}
+
+// L'ENREGISTREMENT : « probe enregistre <fichier.pak> ». Le serveur tourne sur une vraie
+// entree — la table du studio — et personne ne sait ce que le rendu aurait recu. On lit
+// l'anneau comme le renderer le fera et on garde chaque image, dans le meme format que
+// « paquets= » : le set se rejoue ensuite avec « probe rejoue », a la maison, autant de
+// fois qu'il faut. Ctrl-C arrete proprement ; le fichier est vide a la fin de chaque image.
+if (args[0] == "enregistre")
+{
+    if (args.Length < 2) { Console.Error.WriteLine("probe enregistre <fichier.pak> [secondes]"); return 1; }
+    var limite = args.Length > 2 ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : double.PositiveInfinity;
+    var arret = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; arret.Cancel(); };
+
+    // Le serveur cree l'anneau ; on l'attend plutot que de tomber une seconde trop tot.
+    SharedRingReader? lecteur = null;
+    while (lecteur is null && !arret.IsCancellationRequested)
+    {
+        try { lecteur = new SharedRingReader(); }
+        catch (Exception e) when (e is FileNotFoundException or InvalidDataException or IOException)
+        { Thread.Sleep(500); }
+    }
+    if (lecteur is null) return 1;
+    using var _ = lecteur;
+    using var sortie = new FileStream(args[1], FileMode.Create, FileAccess.Write);
+    Console.WriteLine($"anneau ouvert, j'ecris dans {args[1]} (Ctrl-C arrete)");
+    var chrono = System.Diagnostics.Stopwatch.StartNew();
+    long ecrits = 0, dernierRapport = 0;
+    while (!arret.IsCancellationRequested && chrono.Elapsed.TotalSeconds < limite)
+    {
+        if (lecteur.TryRead(out var p))
+        {
+            sortie.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(
+                System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(ref p, 1)));
+            ecrits++;
+        }
+        else Thread.Sleep(5);
+        if (chrono.ElapsedMilliseconds - dernierRapport >= 60_000)
+        {
+            sortie.Flush();
+            dernierRapport = chrono.ElapsedMilliseconds;
+            Console.WriteLine($"{chrono.Elapsed:hh\\:mm\\:ss}  {ecrits} images, {lecteur.Missed} manquees");
+        }
+    }
+    sortie.Flush();
+    Console.WriteLine($"fin : {ecrits} images en {chrono.Elapsed.TotalSeconds:F0} s, {lecteur.Missed} manquees");
+    return 0;
 }
 
 // LE REJEU : « probe rejoue <fichier.pak> ». Les paquets enregistres par « paquets= » sont
