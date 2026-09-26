@@ -192,6 +192,9 @@ public class SharedRingTests : IDisposable
 
         await Task.WhenAll(producteur, consommateur);
 
+        // Si le producteur a echoue, c'est son erreur qu'on veut lire, pas « 0 message lu » :
+        // vu deux fois sur trois sur le runner GitHub, jamais en local.
+        await producteur;
         Assert.True(lus > 1000, $"trop peu de messages lus : {lus}");
         Assert.Equal(0, corrompus);
     }
