@@ -111,6 +111,31 @@ public class CueAlternantTests
         Assert.Equal(1, cue.Voie);
     }
 
+    /// <summary>
+    /// La voie du cue muette cinq secondes pendant que l'autre joue : le cue change de voie,
+    /// meme en plein relais — la parite de l'alternance s'etait perdue.
+    /// </summary>
+    [Fact]
+    public void Une_voie_muette_pendant_que_l_autre_joue_n_est_pas_le_cue()
+    {
+        var (cue, _, _) = Faire();
+        cue.Niveau(1, 0f); cue.Niveau(2, 0.3f);
+        for (var i = 0; i < CueAlternant.ImagesMuettes - 1; i++)
+            Assert.False(cue.Observer(0f, relaisEnCours: true));
+        Assert.True(cue.Observer(0f, relaisEnCours: true));
+        Assert.Equal(2, cue.Voie);
+    }
+
+    [Fact]
+    public void Deux_voies_muettes_ne_font_pas_basculer()
+    {
+        var (cue, _, _) = Faire();
+        cue.Niveau(1, 0f); cue.Niveau(2, 0f);
+        for (var i = 0; i < 3 * CueAlternant.ImagesMuettes; i++)
+            Assert.False(cue.Observer(0f, relaisEnCours: false));
+        Assert.Equal(1, cue.Voie);
+    }
+
     [Fact]
     public async Task Le_flux_ne_porte_que_la_voie_active_et_suit_la_bascule()
     {

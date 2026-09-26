@@ -32,6 +32,20 @@ public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
     /// <summary>Trois secondes d'images d'analyse (47 par seconde) avant de conclure.</summary>
     public const int ImagesDedans = 141;
 
+    /// <summary>
+    /// LE SECOND FILET : la voie du cue est muette depuis cinq secondes et l'autre porte du
+    /// son. Avec des voies prises apres le fader, la parite de l'alternance se perd (un cut
+    /// sec, deux disques de suite sur la meme platine, une permutation du premier filet) et
+    /// le cue ecoute alors une voie vide pendant que le disque suivant joue sur l'autre : la
+    /// machine attend un retrait qui ne vient jamais. Vu au studio le 26 septembre, P1 reste
+    /// affiche pendant tout le dernier morceau.
+    /// </summary>
+    public const int ImagesMuettes = 235;
+    public const float Muet = 0.02f;
+    public const float Vivant = 0.05f;
+    private readonly float[] _niveau = new float[2];
+    private int _imagesMuettes;
+
     private readonly IAudioSource[] _voies;
     private readonly Action<string>? _log;
     private volatile int _active;
@@ -84,12 +98,25 @@ public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
     /// </summary>
     public bool Observer(float blend, bool relaisEnCours)
     {
+        // Le second filet ne depend pas du relais : une voie muette n'est jamais le cue.
+        var active = _active;
+        _imagesMuettes = _niveau[active] < Muet && _niveau[1 - active] > Vivant ? _imagesMuettes + 1 : 0;
+        if (_imagesMuettes >= ImagesMuettes)
+        {
+            _imagesMuettes = 0;
+            Basculer($"filet : la voie {Voie} est muette et l'autre joue");
+            return true;
+        }
+
         if (relaisEnCours) { _imagesDedans = 0; return false; }
         _imagesDedans = blend >= DedansAt ? _imagesDedans + 1 : 0;
         if (_imagesDedans < ImagesDedans) return false;
         Basculer($"filet : la voie {Voie} est dans le master, ce n'est pas le cue");
         return true;
     }
+
+    /// <summary>Le niveau de chaque voie, tel que sa derniere image le dit (pour les tests et le filet).</summary>
+    public void Niveau(int voie, float rms) => _niveau[voie - 1] = rms;
 
     public void Amorcer(float bpm) { if (Active is IAcceptsCue a) a.Amorcer(bpm); }
 
@@ -120,7 +147,10 @@ public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
                 try
                 {
                     await foreach (var f in _voies[index].ReadAsync(stop.Token))
+                    {
+                        _niveau[index] = f.Rms;
                         if (index == _active) file.Writer.TryWrite(f);
+                    }
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception e) { _log?.Invoke($"voie {index + 1} : {e.Message}"); }
