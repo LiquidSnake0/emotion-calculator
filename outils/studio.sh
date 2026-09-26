@@ -6,6 +6,7 @@
 #   ./outils/studio.sh --verif                  3 s par paire : qui porte du signal
 #   ./outils/studio.sh <session> [bpm] [camelot]   la session : enregistre, analyse, montre
 #   STUDIO_ALTERNANCE=0 …                       plan B : un cue fixe sur STUDIO_CUE, sans alternance
+#   STUDIO_SANS_CUE=1 …                         demo : le master seul, il apprend lui-meme
 #
 # LA TABLE EST UNE DJM-750MK2, ET LE NOYAU LA CONNAIT (quirk depuis Linux 5.14) : cinq paires
 # stereo remontent par USB, choisies depuis l'ordinateur par des commutateurs ALSA. Paire k
@@ -14,7 +15,7 @@
 # Le casque, lui, ne passe pas par l'USB : le cue du moteur est donc l'entree brute d'une
 # voie, pas ce que le DJ entend. C'est dit, et c'est la meilleure approximation qu'on ait.
 #
-# Ce qu'on ramene, dans $CACHE/studio/<session>/ :
+# Ce qu'on ramene, dans $STUDIO/<session>/ :
 #   <session>-table.wav    toutes les paires, 24 bits 48 kHz, telles que la table les donne
 #   <session>.pak          chaque image que le moteur a ecrite dans l'anneau (probe enregistre)
 #   <session>-moteur.log   le journal du serveur
@@ -29,6 +30,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 CACHE="${EMOTION_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/emotion-emulator}"
+# LES SESSIONS NE VONT PAS DANS LE CACHE : un set enregistre est une oeuvre et une mesure,
+# pas un fichier qu'on peut regenerer. Elles vivent hors depot, a cote des pistes.
+STUDIO="${EMOTION_STUDIO_DIR:-$HOME/Documents/emotion-sources/studio}"
 PORT=5099
 # Quelle paire est le master, quelle paire porte le cue au depart (1 a 5). Le DJ joue sur
 # les voies 1 et 2 : le premier disque joue sur la 1, le premier prepare est sur la 2. Le cue
@@ -178,7 +182,7 @@ fi
 
 SESSION="$1"; BPM="${2:-}"; CLE="${3:-}"
 [[ -n "$SOURCE" ]] || { echo "aucune table vue par PulseAudio : brancher l'USB, puis ./outils/studio.sh" >&2; exit 1; }
-DIR="$CACHE/studio/$SESSION"; mkdir -p "$DIR"
+DIR="$STUDIO/$SESSION"; mkdir -p "$DIR"
 
 # Construire d'abord : un « dotnet run » compile pendant trente secondes au moment ou tout
 # le reste attend, et cache le vrai processus derriere lui.
@@ -227,7 +231,10 @@ done
 CANAUX=$(canaux_de_la_source)
 NCH=$(echo "$CANAUX" | tr ',' '\n' | grep -c .)
 IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "src") print $(i + 1); exit }')
+# STUDIO_SANS_CUE=1 : le moteur seul sur le master, il apprend lui-meme (demo sur une voie
+# sans cue). Sinon le master ne forme jamais de portrait : « le cue apprend, le master joue ».
 CUE_DEVICES="djm_$CUE_PAIRE"; [[ "$ALTERNANCE" == "1" ]] && CUE_DEVICES="djm_$CUE_PAIRE,djm_$AUTRE_VOIE"
+[[ "${STUDIO_SANS_CUE:-}" == "1" ]] && CUE_DEVICES=""
 echo "session $SESSION → $DIR"
 echo "table : $SOURCE, $NCH canaux · master djm_$MASTER_PAIRE · cue $CUE_DEVICES${BPM:+ · fiche $BPM BPM}${CLE:+ · $CLE}"
 
@@ -240,7 +247,7 @@ fi
 
 # Le JSON du set pour le crate est servi d'ici, sur l'adresse du moment : l'IP change avec le
 # reseau (partage de connexion), un QR d'hier soir ne vaut plus rien.
-python3 - "$CACHE/studio" <<'PY' > /dev/null 2>&1 &
+python3 - "$STUDIO" <<'PY' > /dev/null 2>&1 &
 import http.server, os, sys
 os.chdir(sys.argv[1])
 class H(http.server.SimpleHTTPRequestHandler):
@@ -253,9 +260,9 @@ echo
 echo "crate sur le telephone : http://${IP:-<ip>}:5173/crate/   (npm run dev -- --host 0.0.0.0 dans ~/Documents/crate)"
 command -v qrencode > /dev/null && [[ -n "$IP" ]] && qrencode -t UTF8 -m 1 "http://$IP:5173/crate/"
 echo "moteur, a mettre dans l'onglet Set : http://${IP:-<ip>}:$PORT"
-if ls "$CACHE"/studio/*.json > /dev/null 2>&1; then
-  for j in "$CACHE"/studio/*.json; do echo "JSON du set a importer : http://${IP:-<ip>}:8765/$(basename "$j")"; done
-  command -v qrencode > /dev/null && [[ -n "$IP" ]] && qrencode -t UTF8 -m 1 "http://$IP:8765/$(basename "$(ls "$CACHE"/studio/*.json | head -1)")"
+if ls "$STUDIO"/*.json > /dev/null 2>&1; then
+  for j in "$STUDIO"/*.json; do echo "JSON du set a importer : http://${IP:-<ip>}:8765/$(basename "$j")"; done
+  command -v qrencode > /dev/null && [[ -n "$IP" ]] && qrencode -t UTF8 -m 1 "http://$IP:8765/$(basename "$(ls "$STUDIO"/*.json | head -1)")"
 fi
 echo
 

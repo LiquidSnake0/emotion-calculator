@@ -12,8 +12,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 CACHE="${EMOTION_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/emotion-emulator}"
+# LES SESSIONS NE VONT PAS DANS LE CACHE : un set enregistre est une oeuvre et une mesure,
+# pas un fichier qu'on peut regenerer. Elles vivent hors depot, a cote des pistes.
+STUDIO="${EMOTION_STUDIO_DIR:-$HOME/Documents/emotion-sources/studio}"
 SESSION="${1:?session}"
-FICHIER="$CACHE/studio/$SESSION/$SESSION-terrain.tsv"
+FICHIER="$STUDIO/$SESSION/$SESSION-terrain.tsv"
 mkdir -p "$(dirname "$FICHIER")"
 [[ -s "$FICHIER" ]] || printf 'heure\tepoch_ms\tnote\n' > "$FICHIER"
 echo "notes → $FICHIER   (Ctrl-D ou Ctrl-C pour finir)"

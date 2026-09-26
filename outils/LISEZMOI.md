@@ -307,7 +307,7 @@ notes de la session. C'est le plan B : **le crate le fait lui-même** depuis son
 `<session>-deck.jsonl` (`Signal__JournalDeck`) avec `imageMs`, l'horloge des paquets. Le plan
 de la session et ses cas de test : `docs/studio-2026-09-26.md`.
 
-Ce qu'on ramène dans `~/.cache/emotion-emulator/studio/<session>/` : le WAV de toutes les
+Ce qu'on ramène dans `~/Documents/emotion-sources/studio/<session>/` (hors cache, hors dépôt : une œuvre et une mesure) : le WAV de toutes les
 paires (24 bits, 48 kHz, ~1,4 Mo/s pour dix canaux), le `.pak` de chaque image écrite dans
 l'anneau (`probe enregistre`, nouveau), le journal du moteur, les notes du DJ. Le WAV rejoue
 le moteur (`run.sh fichier`), le `.pak` rejoue le rendu (`probe rejoue`, ou `rejouer.sh`

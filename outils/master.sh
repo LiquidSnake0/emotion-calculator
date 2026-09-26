@@ -11,9 +11,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CACHE="${EMOTION_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/emotion-emulator}"
+# LES SESSIONS NE VONT PAS DANS LE CACHE : un set enregistre est une oeuvre et une mesure,
+# pas un fichier qu'on peut regenerer. Elles vivent hors depot, a cote des pistes.
+STUDIO="${EMOTION_STUDIO_DIR:-$HOME/Documents/emotion-sources/studio}"
 SESSION="${1:?session}"; PAIRE="${2:-${STUDIO_MASTER:-5}}"
 [[ "$PAIRE" =~ ^[1-9]$ ]] || { echo "paire : 1 a 9, pas « $PAIRE »" >&2; exit 2; }
-DIR="$CACHE/studio/$SESSION"; ENTREE="$DIR/$SESSION-table.wav"
+DIR="$STUDIO/$SESSION"; ENTREE="$DIR/$SESSION-table.wav"
 [[ -f "$ENTREE" ]] || { echo "pas de $ENTREE" >&2; exit 1; }
 NCH=$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$ENTREE")
 G=$(( 2*PAIRE - 2 )); D=$(( 2*PAIRE - 1 ))
