@@ -10,6 +10,14 @@ namespace Emotion.Signal.Tests;
 /// </summary>
 public class MachineRelaisTests
 {
+    /// <summary>Le cue hors du melange assez longtemps pour que la machine se libere.</summary>
+    private static Etape Liberer(MachineRelais m, bool cuePret = true)
+    {
+        var libre = false;
+        for (var i = 0; i < MachineRelais.ImagesLibre; i++) libre |= m.Avancer(0.05f, cuePret, true) == Etape.Libre;
+        return libre ? Etape.Libre : Etape.Rien;
+    }
+
     /// <summary>Un fondu lineaire de 0 a 1 en n images, puis les etapes rendues, dans l'ordre.</summary>
     private static List<Etape> Fondu(MachineRelais m, int n = 100, bool cuePret = true, bool tempo = true)
     {
@@ -77,8 +85,10 @@ public class MachineRelaisTests
         Assert.Equal(Etape.Rien, m.Avancer(0.5f, true, true));
         Assert.Equal(3, m.Phase);
 
-        // Un autre disque au casque : le cue sort du melange.
-        Assert.Equal(Etape.Libre, m.Avancer(0.05f, true, true));
+        // Un autre disque au casque : le cue sort du melange — et y reste trois secondes.
+        Assert.Equal(Etape.Rien, m.Avancer(0.05f, true, true));
+        Assert.Equal(3, m.Phase);
+        Assert.Equal(Etape.Libre, Liberer(m));
         Assert.Equal(0, m.Phase);
 
         Assert.Equal([Etape.Accueil, Etape.Tempo, Etape.Retrait], Fondu(m));
@@ -90,7 +100,7 @@ public class MachineRelaisTests
         var m = new MachineRelais();
         Fondu(m, cuePret: false);                        // tempo relaye, phase 0
         Assert.Equal(Etape.Rien, m.Avancer(0.95f, false, true));
-        Assert.Equal(Etape.Libre, m.Avancer(0.05f, false, true));
+        Assert.Equal(Etape.Libre, Liberer(m, cuePret: false));
         Assert.Equal([Etape.Accueil, Etape.Tempo, Etape.Retrait], Fondu(m));
     }
 
@@ -105,7 +115,7 @@ public class MachineRelaisTests
         Fondu(m, cuePret: false);
         Assert.Equal(Etape.Accueil, m.Avancer(0.95f, true, true));
         Assert.Equal(Etape.Retrait, m.Avancer(0.95f, true, true));
-        Assert.Equal(Etape.Libre, m.Avancer(0.05f, true, true));
+        Assert.Equal(Etape.Libre, Liberer(m));
     }
 
     /// <summary>
@@ -119,7 +129,7 @@ public class MachineRelaisTests
         Assert.False(m.EnCours);
         m.Avancer(0.6f, false, true);
         Assert.True(m.EnCours);
-        Assert.Equal(Etape.Libre, m.Avancer(0.05f, false, true));
+        Assert.Equal(Etape.Libre, Liberer(m, cuePret: false));
         Assert.False(m.EnCours);
     }
 
@@ -131,7 +141,7 @@ public class MachineRelaisTests
         for (var disque = 0; disque < 10; disque++)
         {
             retraits += Fondu(m).Count(e => e == Etape.Retrait);
-            m.Avancer(0f, true, true);                   // le disque suivant au casque
+            Liberer(m);                                  // le disque suivant au casque
         }
         Assert.Equal(10, retraits);
     }

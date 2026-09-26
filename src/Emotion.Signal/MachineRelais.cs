@@ -27,6 +27,16 @@ public sealed class MachineRelais
     public const float RetraitAt = 0.9f;
     public const float LibreAt = 0.1f;
 
+    /// <summary>
+    /// Trois secondes d'images (47 par seconde) avec le cue hors du melange avant de se
+    /// liberer. Quand les voies du cue sont prises apres le fader (une table sans casque
+    /// sur l'USB), la voie qui devient le cue apres un retrait porte encore le disque qui
+    /// sort ; se liberer a la premiere image sous le seuil relancait un relais toutes les
+    /// onze secondes, mesure au studio le 26 septembre.
+    /// </summary>
+    public const int ImagesLibre = 141;
+    private int _imagesSousLeSeuil;
+
     public enum Etape { Rien, Accueil, Tempo, Retrait, Libre }
 
     /// <summary>0 rien, 1 accueilli, 2 tempo relaye, 3 retire — pour le journal et la sonde.</summary>
@@ -45,6 +55,7 @@ public sealed class MachineRelais
     {
         Phase = 0;
         _tempoRelaye = false;
+        _imagesSousLeSeuil = 0;
     }
 
     /// <summary>
@@ -77,10 +88,14 @@ public sealed class MachineRelais
         // autre disque tourne au casque. Tant que le meme disque y reste — il joue en
         // salle et personne n'a change le disque du cue — on ne se libere pas, sinon on
         // l'accueillerait une seconde fois.
-        if ((Phase == 3 || (Phase == 0 && _tempoRelaye)) && blend < LibreAt)
+        if (Phase == 3 || (Phase == 0 && _tempoRelaye))
         {
-            Reset();
-            return Etape.Libre;
+            _imagesSousLeSeuil = blend < LibreAt ? _imagesSousLeSeuil + 1 : 0;
+            if (_imagesSousLeSeuil >= ImagesLibre)
+            {
+                Reset();
+                return Etape.Libre;
+            }
         }
 
         return Etape.Rien;

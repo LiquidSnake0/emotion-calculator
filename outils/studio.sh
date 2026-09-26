@@ -36,8 +36,11 @@ PORT=5099
 # faux, le filet permute en trois secondes. STUDIO_CUE=1 si le set commence sur la voie 2.
 MASTER_PAIRE="${STUDIO_MASTER:-5}"
 CUE_PAIRE="${STUDIO_CUE:-2}"
-[[ "$CUE_PAIRE" =~ ^[1-5]$ ]] || { echo "STUDIO_CUE doit valoir 1 a 5, pas « $CUE_PAIRE »" >&2; exit 2; }
-AUTRE_VOIE=$(( CUE_PAIRE == 1 ? 2 : 1 ))
+# La voie du premier disque : le cue alterne entre elle et STUDIO_CUE. Par defaut la 1 ;
+# au studio du 26 septembre, les CDJ sont sur les voies 2 et 3 : STUDIO_JOUE=2 STUDIO_CUE=3.
+AUTRE_VOIE="${STUDIO_JOUE:-$(( CUE_PAIRE == 1 ? 2 : 1 ))}"
+[[ "$CUE_PAIRE" =~ ^[1-5]$ && "$AUTRE_VOIE" =~ ^[1-5]$ && "$CUE_PAIRE" != "$AUTRE_VOIE" ]] \
+  || { echo "STUDIO_CUE et STUDIO_JOUE : deux paires differentes, de 1 a 5" >&2; exit 2; }
 ALTERNANCE="${STUDIO_ALTERNANCE:-1}"
 ANNEAU=/dev/shm/emotion-emulator
 
@@ -93,11 +96,18 @@ regler() {
 # Pour la voie, trois entrees possibles (LINE, CD/LINE, DIGITAL) selon ce qui est branche :
 # on n'en sait rien d'avance, --verif ecoute chacune et garde celle qui porte du son.
 
-# La source stereo de la paire k, taillee dans la source multicanal.
+# La source stereo de la paire k, taillee dans la source multicanal. La DJM-750MK2 ne range
+# pas ses paires deux canaux par deux : mesure du 26 septembre, paire 2 = canaux 1 et 4,
+# paire 3 = 2 et 5, paire 5 = 6 et 7 (le Rec Out). STUDIO_PAIRES dit ou est chaque paire ;
+# sans lui, deux canaux consecutifs.
+STUDIO_PAIRES="${STUDIO_PAIRES:-2:rear-left,rear-right 3:front-center,lfe 5:aux0,aux1}"
 remap() {
-  local k="$1" nom="djm_$1" carte cm a b
+  local k="$1" nom="djm_$1" carte cm a b paire
   carte=$(canaux_de_la_source); IFS=',' read -r -a cm <<< "$carte"
   a="${cm[$((2*k-2))]:-}"; b="${cm[$((2*k-1))]:-}"
+  for paire in $STUDIO_PAIRES; do
+    [[ "${paire%%:*}" == "$k" ]] && { a="${paire#*:}"; b="${a#*,}"; a="${a%%,*}"; }
+  done
   [[ -n "$a" && -n "$b" ]] || { echo "la source n'a pas de paire $k (canaux : $carte)" >&2; return 1; }
   pactl load-module module-remap-source source_name="$nom" master="$SOURCE" channels=2 \
         channel_map=front-left,front-right master_channel_map="$a,$b" remix=no > /dev/null 2>&1 \
@@ -187,6 +197,25 @@ sleep 0.5
 # le recree.
 rm -f "$ANNEAU"
 
+# LA CAPTURE DE LA TABLE NE VIT QUE SI ON LUI JOUE QUELQUE CHOSE : son entree USB sert
+# d'horloge a sa sortie (retour implicite). Un flux de silence permanent vers elle, et les
+# douze canaux arrivent. Mesure du 26 septembre : sans lui, que des zeros.
+SINK=$(pactl list sinks short 2>/dev/null | awk '{print $2}' | grep -i "djm" | head -1)
+SILENCE=""
+if [[ -n "$SINK" ]] && ! pgrep -f "pacat --device=$SINK" > /dev/null; then
+  pacat --device="$SINK" --format=s24le --rate=48000 --channels=10 --raw /dev/zero > /dev/null 2>&1 &
+  SILENCE=$!
+  sleep 1
+fi
+
+# Le routage des paires, envoye a la table par USB (ce que le quirk du noyau ferait). Sur ce
+# noyau, sans quirk, la table stream ce qu'elle veut tant qu'on ne lui a rien dit. Le noeud
+# USB doit etre accessible (sudo chmod o+w /dev/bus/usb/<bus>/<adresse>, ou root).
+ROUTAGE="${STUDIO_ROUTAGE:-2=postfader 3=postfader 5=recout niveau=-10}"
+if [[ -n "$ROUTAGE" ]] && [[ -x .venv-rekordbox/bin/python ]]; then
+  .venv-rekordbox/bin/python outils/djm_routage.py $ROUTAGE 2>&1 | sed 's/^/  routage : /' || echo "routage USB refuse : voir outils/djm_routage.py" >&2
+fi
+
 # Les paires, si --verif ne les a pas deja posees — et les trois qui servent doivent exister.
 pactl list sources short | grep -q "djm_$MASTER_PAIRE" || { retirer_remaps; for k in 1 2 3 4 5; do remap "$k" 2>/dev/null || true; done; }
 PAIRES_UTILES="$MASTER_PAIRE $CUE_PAIRE"; [[ "$ALTERNANCE" == "1" ]] && PAIRES_UTILES="$PAIRES_UTILES $AUTRE_VOIE"
@@ -254,6 +283,7 @@ arreter() {
   [[ -n "${PAK:-}" ]] && { kill -TERM "$PAK" 2>/dev/null; wait "$PAK" 2>/dev/null; }   # il vide son tampon
   kill -INT "$ENREG" 2>/dev/null; wait "$ENREG" 2>/dev/null         # parecord ferme le WAV
   kill "$JSON_SERVEUR" 2>/dev/null
+  [[ -n "${SILENCE:-}" ]] && kill "$SILENCE" 2>/dev/null
   echo "ramene : $(ls "$DIR")"
 }
 trap arreter EXIT

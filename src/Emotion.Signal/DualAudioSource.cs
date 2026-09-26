@@ -50,6 +50,7 @@ public sealed class DualAudioSource : IAudioSource
     /// testent ; ici on ne fait qu'executer l'etape qu'elle rend.
     /// </summary>
     private readonly MachineRelais _relais = new();
+    private int _imagesJournal;
 
     /// <summary>
     /// La derniere analyse du cue : tempo, harmonie, registres du disque en preparation.
@@ -151,6 +152,13 @@ public sealed class DualAudioSource : IAudioSource
                 // pas — sinon la voie nouvelle, qui porte encore le disque sortant, serait
                 // accueillie une seconde fois des que le DJ le ramene un peu.
                 var blendPourLaMachine = _relais.Phase == 3 && !_blend.Pret ? 1f : blend;
+                // Une ligne toutes les cinq secondes dans le journal du serveur : ce que la machine
+                // voit. C'est ce qui manquait au studio pour comprendre un relais qui tournait en rond.
+                if (++_imagesJournal >= 235)
+                {
+                    _imagesJournal = 0;
+                    Console.Error.WriteLine($"relais : fondu {blend:F2} phase {_relais.Phase} cue {(_cue is CueAlternant a ? a.Voie : 0)} tempo cue {cue.Bpm?.ToString("F1") ?? "-"} niveau cue {cue.Rms:F3}");
+                }
                 switch (_relais.Avancer(blendPourLaMachine, cuePret, tempoDisponible))
                 {
                     // L'ACCUEIL : le disque qui entre s'entend, ses regles passent au master.
