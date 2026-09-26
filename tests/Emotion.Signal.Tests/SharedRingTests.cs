@@ -172,7 +172,13 @@ public class SharedRingTests : IDisposable
 
         var consommateur = Task.Run(() =>
         {
-            while (!producteur.IsCompleted || true)
+            // SUR UN RUNNER RAPIDE, LE PRODUCTEUR A TOUJOURS UN TOUR D'AVANCE : chaque copie
+            // est jetee, TryRead rend faux, et si le producteur finit a cet instant-la le
+            // consommateur sortait sans avoir rien lu (« messages lus : 0 », deux fois sur
+            // trois sur GitHub, jamais en local). Une fois le producteur fini, on fait un
+            // dernier tour a vide avant de conclure.
+            var finis = false;
+            while (true)
             {
                 if (r.TryRead(out var p))
                 {
@@ -184,17 +190,16 @@ public class SharedRingTests : IDisposable
                         p.TimeMs != attenduT ||
                         MathF.Abs(p.Level - attenduL) > 1e-6f)
                         Interlocked.Increment(ref corrompus);
+                    continue;
                 }
-                else if (producteur.IsCompleted) break;
+                if (finis) break;
+                if (producteur.IsCompleted) finis = true;
                 else if (cts.IsCancellationRequested) break;
             }
         }, cts.Token);
 
         await Task.WhenAll(producteur, consommateur);
 
-        // Si le producteur a echoue, c'est son erreur qu'on veut lire, pas « 0 message lu » :
-        // vu deux fois sur trois sur le runner GitHub, jamais en local.
-        await producteur;
         Assert.True(lus > 1000, $"trop peu de messages lus : {lus}");
         Assert.Equal(0, corrompus);
     }
