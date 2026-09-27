@@ -336,6 +336,17 @@ dans `~/.cache/emotion-emulator/rekordbox.json` (1 943 morceaux sur la clé du 2
 playlists de la clé. `crate_playlist.py` en fait le JSON à importer dans le crate (`SET=`
 le nom du set, écrit en tête des notes ; `plIndex` = le rang dans la liste).
 
+## `session.py` — ce qu'une session studio a donne, en chiffres
+
+```sh
+python3 outils/session.py            # toutes les sessions : images du .pak, trous, tempo publie, relais, bascules, gestes
+python3 outils/session.py set-2      # passage par passage : cue → accueil, take → retrait, fiche contre tempo publie
+```
+
+Le .pak, le journal du crate et celui du moteur mis cote a cote. C'est cette lecture qui a
+montre, le 27 septembre 2026, que les filets du cue alternant se declenchaient a
+contretemps : un relais par passage dans le crate, deux a onze dans le moteur.
+
 ## `passages.py` et `monter.py` — juger les passages, monter un set
 
 ```sh
