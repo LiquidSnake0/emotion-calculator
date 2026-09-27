@@ -335,3 +335,22 @@ dans `~/.cache/emotion-emulator/rekordbox.json` (1 943 morceaux sur la clé du 2
 `outils/rekordbox_pdb.py` — un lecteur maison du format DeviceSQL, qui lit aussi les
 playlists de la clé. `crate_playlist.py` en fait le JSON à importer dans le crate (`SET=`
 le nom du set, écrit en tête des notes ; `plIndex` = le rang dans la liste).
+
+## `passages.py` et `monter.py` — juger les passages, monter un set
+
+```sh
+python3 outils/passages.py set-2             # chaque recouvrement : tempo des deux decks, ecart des frappes debut → fin
+python3 outils/monter.py plan.json set.wav   # raccorde des prises au sample pres sur un morceau joue dans les deux
+```
+
+`passages.py` lit les voies apres fader du multipiste : pendant un passage chaque deck est
+seul sur sa piste, donc l'écart entre leurs frappes se mesure (un écart qui bouge = pas
+calé, un écart stable loin de zéro = calé à côté). Écrit au studio le 26 septembre pour
+répondre à « à quel moment je me foire ? » ; c'est lui qui a montré que les passages qui
+tiennent sont ceux où les deux disques ont un kick net.
+
+`monter.py` aligne deux prises sur un morceau présent dans les deux (enveloppes des frappes
+avec recherche du rapport de vitesse, puis l'onde au point exact ; en secours, l'onde
+partout), ramène chaque prise à la vitesse de la première par rééchantillonnage — ce que
+fait un fader de pitch, pas un étirement — et fond l'une dans l'autre. Le set du 26
+septembre : sept raccords, tous à 0,87–0,99 de corrélation d'onde, 52,8 min.
