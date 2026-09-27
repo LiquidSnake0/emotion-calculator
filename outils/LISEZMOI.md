@@ -363,6 +363,23 @@ Le .pak, le journal du crate et celui du moteur mis cote a cote. C'est cette lec
 montre, le 27 septembre 2026, que les filets du cue alternant se declenchaient a
 contretemps : un relais par passage dans le crate, deux a onze dans le moteur.
 
+## `reconstruire.py` — le master d'une prise refait depuis ses deux voies
+
+```sh
+python3 outils/reconstruire.py set-2 --debut=840 --fin=2310 --cible=-16.5 --garder=1405,1530 --brut=3
+python3 outils/reconstruire.py apres-4 --fin=540 --cible=-16.5 --sortie=0:170
+python3 outils/monter.py montage-set-2.json set-monte-v2.wav        # le plan dit "master": "-v2.wav"
+```
+
+Chaque disque est seul sur sa voie apres fader : on le pese (tous au meme plateau, `--cible`),
+on recale le disque entrant sur le sortant deja corrige (decalage et vitesse, mesures comme
+dans `passages.py`, appliques seulement quand la mesure est nette ou l'ecart enorme), on
+eteint un fader oublie (`--sortie`), et l'on ne garde le Rec Out — donc les effets de la
+table — que dans les fenetres demandees (`--garder`). Le resultat `<prise>-v2.wav` commence a
+l'« origine » ecrite dans `<prise>-v2.json`, que `monter.py` lit pour decaler ses fenetres. Ne
+sait pas allonger un disque ni adoucir une coupure : la voie ne contient que ce que le fader a
+laisse passer, il faut l'original pour ca.
+
 ## `passages.py` et `monter.py` — juger les passages, monter un set
 
 ```sh

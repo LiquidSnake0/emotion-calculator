@@ -14,7 +14,13 @@
 #
 #   {"prises": ["avant", "avant-2", ...],
 #    "raccords": [{"a": [225, 410], "b": [10, 330], "morceau": "mori"}, ...],
-#    "fondu": 4.0}
+#    "fondu": 4.0,
+#    "master": "-v2.wav"}
+#
+# "master" (facultatif, "-master.wav" par defaut) dit quel fichier de chaque prise on monte : le
+# Rec Out tel quel, ou le master reconstruit par reconstruire.py ("-v2.wav"), qui commence a
+# l'instant « origine » de son .json — les fenetres du plan restent en secondes de la prise, on
+# les decale pour lui.
 import json, os, subprocess, sys
 from pathlib import Path
 import numpy as np
@@ -22,10 +28,18 @@ import numpy as np
 STUDIO = Path(os.environ.get("EMOTION_STUDIO_DIR", Path.home() / "Documents/emotion-sources/studio"))
 SR = 8000
 
+SUFFIXE = "-master.wav"
+
 def master(prise):
-    m = STUDIO / prise / f"{prise}-master.wav"
-    if not m.exists(): sys.exit(f"pas de {m} : ./outils/master.sh {prise}")
+    m = STUDIO / prise / f"{prise}{SUFFIXE}"
+    if not m.exists(): sys.exit(f"pas de {m} : ./outils/master.sh {prise}" if SUFFIXE == "-master.wav" else f"pas de {m} : reconstruire.py {prise}")
     return m
+
+def origine(prise):
+    """Ou commence le fichier monte, en secondes de la prise : 0 pour le Rec Out, l'origine du .json pour un master reconstruit."""
+    j = STUDIO / prise / f"{prise}{SUFFIXE.replace('.wav', '.json')}"
+    if SUFFIXE == "-master.wav" or not j.exists(): return 0.0
+    return float(json.loads(j.read_text()).get("origine", 0.0))
 
 def mono(wav, debut, duree):
     raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{debut:.3f}", "-t", f"{duree:.3f}", "-i", str(wav),
@@ -120,16 +134,19 @@ def main():
     if len(sys.argv) < 3: print(__doc__); return 2
     plan = json.loads(Path(sys.argv[1]).read_text()); sortie = sys.argv[2]
     prises = plan["prises"]; raccords = plan["raccords"]; fondu = float(plan.get("fondu", 4.0))
+    global SUFFIXE; SUFFIXE = plan.get("master", "-master.wav")
     assert len(raccords) == len(prises) - 1
     coupes = []   # (tA fin de la prise i, tB debut de la prise i+1)
     for i, r in enumerate(raccords):
         wa, wb = master(prises[i]), master(prises[i + 1])
-        tA, tB, ratio, score = aligner(wa, r["a"], wb, r["b"])
+        oa, ob = origine(prises[i]), origine(prises[i + 1])
+        fa = (max(0.0, r["a"][0] - oa), r["a"][1] - oa); fb = (max(0.0, r["b"][0] - ob), r["b"][1] - ob)
+        tA, tB, ratio, score = aligner(wa, fa, wb, fb)
         if tA is None: sys.exit(f"raccord {r.get('morceau')} : fenetres trop courtes")
         tB, q = affiner(wa, tA, wb, tB, ratio)
         if q < 0.5:
             # les frappes n'ont pas tranche : l'onde elle-meme, partout dans les deux fenetres
-            tA2, tB2, r2, q2 = aligner_onde(wa, r["a"], wb, r["b"])
+            tA2, tB2, r2, q2 = aligner_onde(wa, fa, wb, fb)
             if tA2 is not None and q2 > q:
                 tA, tB, ratio, q = tA2, tB2, r2, q2
                 tB, q = affiner(wa, tA, wb, tB, ratio)
@@ -158,9 +175,22 @@ def main():
         out = f"[m{i}]"
         filtres.append(f"{courant}{noms[i]}acrossfade=d={fondu}:c1=tri:c2=tri{out}")
         courant = out
+    # LA CRETE FINALE : les masters reconstruits sont en flottants et peuvent depasser 0 dBFS ; on
+    # mesure la crete du montage et l'on pose le gain qui la met a "crete" (−1 dBFS par defaut),
+    # une fois, sur tout le set — jamais de limiteur, un set de DJ garde sa dynamique.
+    crete = float(plan.get("crete", -1.0))
+    brut = sortie + ".brut.wav"
     cmd = ["ffmpeg", "-v", "error", "-y"] + entrees + ["-filter_complex", ";".join(filtres), "-map", courant,
-           "-c:a", "pcm_s24le", "-ar", "48000", sortie]
+           "-c:a", "pcm_f32le", "-ar", "48000", brut]
     subprocess.run(cmd, check=True)
+    # astats, pas volumedetect : ce dernier mesure en 16 bits et ne voit jamais au-dessus de 0 dB.
+    mesure = subprocess.run(["ffmpeg", "-v", "info", "-i", brut, "-af", "astats=measure_perchannel=none:measure_overall=Peak_level",
+                             "-f", "null", "-"], capture_output=True, text=True).stderr
+    pic = float(next(l for l in mesure.splitlines() if "Peak level dB" in l).split(":")[1])
+    gain = crete - pic
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", brut, "-af", f"volume={gain:.2f}dB", "-c:a", "pcm_s24le", sortie], check=True)
+    os.remove(brut)
+    print(f"crete {pic:+.1f} dB → gain {gain:+.1f} dB, crete finale {crete:+.1f} dB")
     d = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", sortie],
                        capture_output=True, text=True).stdout.strip()
     print(f"→ {sortie} : {float(d)/60:.1f} min")
