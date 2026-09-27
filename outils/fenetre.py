@@ -43,6 +43,7 @@ import json
 import math
 import mmap
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -2005,6 +2006,16 @@ def main():
     app = QApplication(sys.argv)
     mur = Mur()
     mur.show()
+    # CTRL-C FERME LA FENETRE, COMME Q. Au studio (26 septembre 2026), Ctrl-C dans le
+    # terminal arretait tout sauf elle : la boucle Qt ne rend la main a Python que
+    # lorsqu'un peu de Python tourne, et un signal recu pendant qu'elle attend reste en
+    # suspens. Une minuterie vide toutes les 200 ms suffit a ce que le gestionnaire passe ;
+    # et il ferme proprement — lecteur arrete, rapport ecrit — au lieu de tuer.
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: mur.close())
+    reveil = QTimer()
+    reveil.timeout.connect(lambda: None)
+    reveil.start(200)
     return app.exec()
 
 

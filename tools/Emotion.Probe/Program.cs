@@ -20,6 +20,8 @@ if (args.Length < 1)
     Console.Error.WriteLine("          blend=<cueB aligne.wav> fader=<fichier.tsv>   — le fader tel que BlendEstimator le devine");
     Console.Error.WriteLine("       probe rejoue <fichier.pak> [vitesse]   — rejoue les paquets dans l'anneau partage");
     Console.Error.WriteLine("       probe enregistre <fichier.pak> [secondes] — copie ce que le serveur ecrit dans l'anneau");
+    Console.Error.WriteLine("       probe session <recout.wav> <voie1.wav> <voie2.wav> [journal=<deck.jsonl>] [paquets=<f.pak>]");
+    Console.Error.WriteLine("                     — rejoue une session studio dans DualAudioSource, cue alternant compris");
     return 1;
 }
 
@@ -97,6 +99,125 @@ if (args[0] == "rejoue")
         anneau.Write(in p);
     }
     Console.WriteLine("fin du rejeu");
+    return 0;
+}
+
+
+// LE REJEU D'UNE SESSION : « probe session <recout.wav> <voie1.wav> <voie2.wav> ». Les trois
+// fichiers viennent du multipiste de la table (Rec Out, et les deux voies apres fader),
+// et passent dans le meme DualAudioSource que la soiree — cue alternant, machine du
+// relais, fondu mesure — en pas cadence, aussi vite que la chaine les avale. Le journal du
+// crate (« journal=<deck.jsonl> ») est rejoue a ses instants : cue, take, play, comme les
+// endpoints /deck les appliquent. C'est ce qui fait d'une session un fixture : le nombre
+// de relais que le moteur fait pour le nombre de takes que le DJ a faits, et un .pak
+// propre (« paquets= ») regenere sans rien avoir a rebrancher.
+if (args[0] == "session")
+{
+    if (args.Length < 4) { Console.Error.WriteLine("probe session <recout.wav> <voie1.wav> <voie2.wav> [journal=<deck.jsonl>] [paquets=<f.pak>]"); return 1; }
+    var horloge = new HorlogeRejeu(3);
+    var maitre = new WavAudioSource(args[1], boucle: false, horloge: horloge);
+    var voie1 = new WavAudioSource(args[2], boucle: false, horloge: horloge);
+    var voie2 = new WavAudioSource(args[3], boucle: false, horloge: horloge);
+    var filets = 0;
+    var alternant = new CueAlternant(voie1, voie2, m => { if (m.Contains("filet")) filets++; Console.Error.WriteLine($"\r{m}"); });
+    var dual = new DualAudioSource(maitre, alternant);
+
+    // Le journal du crate, dans l'ordre de l'horloge du moteur (imageMs ≈ l'instant dans le WAV :
+    // le moteur part quelques centaines de millisecondes apres parecord).
+    var gestes = new List<(long T, string Verbe, System.Text.Json.JsonElement? Corps)>();
+    if (args.FirstOrDefault(a => a.StartsWith("journal="))?[8..] is { } cheminJournal)
+    {
+        foreach (var ligne in File.ReadLines(cheminJournal))
+        {
+            if (string.IsNullOrWhiteSpace(ligne)) continue;
+            var doc = System.Text.Json.JsonDocument.Parse(ligne).RootElement;
+            gestes.Add((doc.GetProperty("imageMs").GetInt64(), doc.GetProperty("verbe").GetString() ?? "",
+                        doc.TryGetProperty("corps", out var c) && c.ValueKind == System.Text.Json.JsonValueKind.Object ? c : null));
+        }
+        gestes.Sort((a, b) => a.T.CompareTo(b.T));
+    }
+    static (string Titre, float Bpm, string Camelot, TrackContext Fiche) Lire(System.Text.Json.JsonElement corps)
+    {
+        var titre = corps.TryGetProperty("Title", out var t) ? t.GetString() ?? "" : "";
+        var bpm = corps.TryGetProperty("Bpm", out var b) && b.ValueKind == System.Text.Json.JsonValueKind.Number ? b.GetSingle() : 0f;
+        var camelot = corps.TryGetProperty("Camelot", out var k) ? k.GetString() ?? "" : "";
+        TrackContext fiche;
+        try { fiche = System.Text.Json.JsonSerializer.Deserialize<TrackContext>(corps.GetRawText()) ?? TrackContext.Silence; }
+        catch (Exception) { fiche = TrackContext.Silence; }
+        return (titre, bpm, camelot, fiche);
+    }
+
+    using var sortiePaquets = args.FirstOrDefault(a => a.StartsWith("paquets="))?[8..] is { } cheminSortie
+        ? new FileStream(cheminSortie, FileMode.Create, FileAccess.Write) : null;
+    var cues = 0; var takes = 0; var accueils = 0; var retraits = 0; var phasePrecedente = 0;
+    var geste = 0; string? auCasque = null; var ficheCasque = TrackContext.Silence; var ficheJoue = TrackContext.Silence;
+    uint numero = 0; long images = 0; long dernierT = 0;
+    var chrono = System.Diagnostics.Stopwatch.StartNew();
+    await foreach (var f in dual.ReadAsync(CancellationToken.None))
+    {
+        images++; dernierT = f.T;
+        while (geste < gestes.Count && gestes[geste].T <= f.T)
+        {
+            var (t, verbe, corps) = gestes[geste++];
+            switch (verbe)
+            {
+                case "cue" when corps is { } c:
+                {
+                    // Comme /deck/cue : un autre disque au casque remet l'analyseur de la voie a
+                    // zero (la voie, pas l'alternance), la fiche amorce le tempo et la gamme.
+                    var (titre, bpm, cle, fiche) = Lire(c);
+                    cues++;
+                    if (!string.Equals(auCasque, titre, StringComparison.Ordinal)) dual.Cue.Analyzer?.NewTrack();
+                    if (bpm > 0f) alternant.Amorcer(bpm);
+                    if (Gamme.Lire(cle) is not null) dual.Cue.Analyzer?.Gamme(cle);
+                    auCasque = titre; ficheCasque = fiche;
+                    Console.Error.WriteLine($"\r{t / 60000.0,6:F1} min  cue   {titre}");
+                    break;
+                }
+                case "take":
+                {
+                    // Comme /deck/take avec une vraie table : le relais a deja transporte, le geste
+                    // tient les comptes et donne au master la fiche du disque qui joue desormais.
+                    takes++;
+                    ficheJoue = ficheCasque;
+                    maitre.Resume(TrackKnowledge.Empty(auCasque ?? ""));
+                    if (ficheJoue.Bpm > 0f) maitre.Amorcer(ficheJoue.Bpm);
+                    if (Gamme.Lire(ficheJoue.Camelot) is not null) maitre.Analyzer.Gamme(ficheJoue.Camelot);
+                    Console.Error.WriteLine($"\r{t / 60000.0,6:F1} min  take  {auCasque}");
+                    break;
+                }
+                case "play" when corps is { } c:
+                {
+                    var (titre, bpm, cle, fiche) = Lire(c);
+                    ficheJoue = fiche;
+                    maitre.NewTrack();
+                    if (bpm > 0f) maitre.Amorcer(bpm);
+                    if (Gamme.Lire(cle) is not null) maitre.Analyzer.Gamme(cle);
+                    Console.Error.WriteLine($"\r{t / 60000.0,6:F1} min  play  {titre}");
+                    break;
+                }
+            }
+        }
+
+        // Le relais tel que la machine le vit : une phase qui passe a 1, c'est un accueil ; a 3, un retrait.
+        if (dual.Phase == 1 && phasePrecedente != 1) accueils++;
+        if (dual.Phase == 3 && phasePrecedente != 3) retraits++;
+        phasePrecedente = dual.Phase;
+
+        if (sortiePaquets is not null)
+        {
+            var paquet = GpuPacket.From(in f, ficheJoue, ++numero);
+            var brut = System.Runtime.InteropServices.MemoryMarshal.AsBytes(
+                System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(ref paquet, 1));
+            sortiePaquets.Write(brut);
+        }
+        if (images % 1410 == 0)
+            Console.Error.Write($"\r{f.T / 60000.0,6:F1} min  accueils {accueils}  retraits {retraits}  bascules {alternant.Bascules} (filets {filets})  x{f.T / 1000.0 / chrono.Elapsed.TotalSeconds:F1}   ");
+    }
+    Console.Error.WriteLine();
+    Console.WriteLine($"{images} images, {dernierT / 60000.0:F1} min, rejouees en {chrono.Elapsed.TotalMinutes:F1} min");
+    Console.WriteLine($"crate  : {cues} cues, {takes} takes");
+    Console.WriteLine($"moteur : {accueils} accueils, {retraits} retraits, {alternant.Bascules} bascules du cue dont {filets} par le filet");
     return 0;
 }
 

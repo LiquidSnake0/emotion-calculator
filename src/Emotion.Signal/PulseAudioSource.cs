@@ -16,7 +16,7 @@ namespace Emotion.Signal;
 /// sa sortie standard, et cela evite une dependance native a compiler par plateforme.
 /// Le cout est un processus fils, et deux pieges qu'il faut traiter — voir plus bas.
 /// </summary>
-public sealed class PulseAudioSource : IAudioSource, ILearnsTracks, IAcceptsCue
+public sealed class PulseAudioSource : IAudioSource, ILearnsTracks, IAcceptsCue, IMaitre
 {
     private const int SampleRate = 48_000;
 

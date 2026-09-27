@@ -23,20 +23,34 @@ namespace Emotion.Signal;
 ///
 /// Elle sert aussi, au-dela du diagnostic, a rejouer un set enregistre dans toute la chaine
 /// sans materiel : ce que la sonde ne permet pas, puisqu'elle court-circuite le serveur.
+///
+/// AVEC UNE <see cref="HorlogeRejeu"/>, PLUS DE RYTHME REEL : les fenetres sont datees au
+/// compte d'echantillons et lues aussi vite que la chaine les avale, mais en pas cadence
+/// avec les autres fichiers de la meme session — le Rec Out et les deux voies d'une table,
+/// enregistres ensemble, se rejouent ensemble. C'est ce qui fait d'une session studio un
+/// fixture : une heure de set se rejoue en quelques minutes, a l'identique, avec le relais.
+///
+/// LE FICHIER SE LIT PAR TRANCHES D'UNE MINUTE. Une session fait une heure a 48 kHz ; trois
+/// fichiers entiers en flottants, c'est deux gigaoctets, et le portable n'en a pas quatre de
+/// libres.
 /// </summary>
-public sealed class WavAudioSource : IAudioSource, ILearnsTracks, IAcceptsCue
+public sealed class WavAudioSource : IAudioSource, ILearnsTracks, IAcceptsCue, IMaitre
 {
     private readonly string _path;
     private readonly SpectrumAnalyzer _analyzer;
     private readonly bool _boucle;
+    private readonly HorlogeRejeu? _horloge;
+    private readonly int _rang;
 
-    public WavAudioSource(string path, bool separate = false, bool boucle = true)
+    public WavAudioSource(string path, bool separate = false, bool boucle = true, HorlogeRejeu? horloge = null)
     {
         _path = path;
         _boucle = boucle;
         var (_, rate) = Wav.ReadMono(path, 0, 0.1);
-        _analyzer = new SpectrumAnalyzer(rate, separate);
         SampleRate = rate;
+        _analyzer = new SpectrumAnalyzer(rate, separate);
+        _horloge = horloge;
+        _rang = horloge?.Inscrire() ?? -1;
     }
 
     public int SampleRate { get; }
@@ -45,65 +59,68 @@ public sealed class WavAudioSource : IAudioSource, ILearnsTracks, IAcceptsCue
 
     public SpectrumAnalyzer Analyzer => _analyzer;
 
-    // LA RELECTURE DE FICHIER DOIT SE COMPORTER COMME L'ECOUTE REELLE, SANS QUOI ELLE NE
-    // VALIDE RIEN.
-    //
-    // Elle ne le faisait pas : ces trois methodes vivaient sur PulseAudioSource seulement,
-    // donc `TrackMemory.Play` ne trouvait pas d'apprenant et l'amorce de la fiche n'etait
-    // jamais posee. Toute mesure faite sur un WAV portait donc sur un moteur NON AMORCE —
-    // et c'est precisement le chemin qu'on emprunte pour mesurer, puisqu'un fichier se
-    // rejoue a l'identique quand un set ne se rejoue pas.
-    //
-    // Le cout de cette lacune est chiffre : sur un album entier du bac, la justesse du
-    // tempo passe de 43 % sans fiche a 99 % avec. Un banc d'essai qui coupe l'amorce
-    // mesure donc l'autre systeme.
-
-    /// <summary>Reprend ce qu'on savait de ce disque.</summary>
     public void Resume(in TrackKnowledge knowledge) => _analyzer.Reprendre(knowledge);
 
-    /// <summary>Rend ce qu'on sait maintenant, pour rangement.</summary>
     public TrackKnowledge Park(string id, in TrackKnowledge previous) =>
         _analyzer.Connaissance(id, previous);
 
-    /// <summary>
-    /// Le tempo annonce par la fiche du crate. Il ne remplace pas la mesure : il recentre
-    /// la ponderation de l'autocorrelation, qui continue de chercher.
-    /// </summary>
     public void Amorcer(float bpm) => _analyzer.Amorcer(bpm);
 
-    /// <summary>
-    /// Meme contrat que l'ecoute reelle. Sans lui, un rejeu ne remettait jamais la
-    /// separation a zero — c'est le troisieme membre de cette interface qui manquait ici,
-    /// apres IAcceptsCue et ILearnsTracks, et pour la meme raison.
-    /// </summary>
     public void NewTrack() => _analyzer.NewTrack();
+
+    public void AdoptTempo(float bpm, long tMs) => _analyzer.AdoptTempo(bpm, tMs);
+
+    public float Fondu { set => _analyzer.Fondu = value; }
+
+    /// <summary>Une minute par tranche : un multiple de la fenetre, pour que rien ne se perde aux coutures.</summary>
+    private const int Tranche = SpectrumAnalyzer.Window * 2800;
 
     public async IAsyncEnumerable<VisualFrame> ReadAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
-        var (mono, _) = Wav.ReadMono(_path, 0, double.MaxValue);
-        var start = DateTime.UtcNow;
         const int hop = SpectrumAnalyzer.Window;
-
-        var tour = 0;
-        while (!ct.IsCancellationRequested)
+        var start = DateTime.UtcNow;
+        long lus = 0;
+        try
         {
-            for (var i = 0; i + hop <= mono.Length && !ct.IsCancellationRequested; i += hop)
+            while (!ct.IsCancellationRequested)
             {
-                // Le rythme reel : on attend que la fenetre soit « arrivee ». Sans cela on
-                // rejouerait le morceau cent fois plus vite et l'on ne testerait rien.
-                var du = (tour * (double)mono.Length + i) / SampleRate * 1000.0;
-                var retard = du - (DateTime.UtcNow - start).TotalMilliseconds;
-                if (retard > 1) await Task.Delay((int)retard, ct);
-
-                // Meme base de temps que la capture : l'horloge murale, pas le compte
-                // d'echantillons. C'est precisement la variable qu'on veut isoler.
-                var t = (long)(DateTime.UtcNow - start).TotalMilliseconds;
-                yield return _analyzer.Analyze(mono.AsSpan(i, hop), t);
+                long depuis = 0;
+                while (!ct.IsCancellationRequested)
+                {
+                    var (mono, _) = Wav.ReadMono(_path, depuis / (double)SampleRate, Tranche / (double)SampleRate);
+                    for (var i = 0; i + hop <= mono.Length && !ct.IsCancellationRequested; i += hop)
+                    {
+                        // La date de la fenetre au compte d'echantillons, tours compris.
+                        var tEch = (long)(lus * 1000.0 / SampleRate);
+                        lus += hop;
+                        long t;
+                        if (_horloge is not null)
+                        {
+                            await _horloge.Attendre(_rang, tEch, ct);
+                            t = tEch;
+                        }
+                        else
+                        {
+                            // Le rythme reel : on attend que la fenetre soit « arrivee ». Sans cela on
+                            // rejouerait le morceau cent fois plus vite et l'on ne testerait rien.
+                            var retard = tEch - (DateTime.UtcNow - start).TotalMilliseconds;
+                            if (retard > 1) await Task.Delay((int)retard, ct);
+                            // Meme base de temps que la capture : l'horloge murale, pas le compte
+                            // d'echantillons. C'est precisement la variable qu'on veut isoler.
+                            t = (long)(DateTime.UtcNow - start).TotalMilliseconds;
+                        }
+                        yield return _analyzer.Analyze(mono.AsSpan(i, hop), t);
+                    }
+                    if (mono.Length < Tranche) break;
+                    depuis += Tranche;
+                }
+                if (!_boucle) yield break;
             }
-
-            if (!_boucle) yield break;
-            tour++;
+        }
+        finally
+        {
+            _horloge?.Terminer(_rang);
         }
     }
 }

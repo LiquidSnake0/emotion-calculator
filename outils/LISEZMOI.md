@@ -336,6 +336,22 @@ dans `~/.cache/emotion-emulator/rekordbox.json` (1 943 morceaux sur la clé du 2
 playlists de la clé. `crate_playlist.py` en fait le JSON à importer dans le crate (`SET=`
 le nom du set, écrit en tête des notes ; `plIndex` = le rang dans la liste).
 
+## `probe session` — rejouer une session studio dans le moteur, sans la table
+
+```sh
+ffmpeg -i set-2-table.wav -filter_complex "pan=mono|c0=0.5*c8+0.5*c9" -ar 48000 recout.wav   # idem c2,c3 (voie 2) et c4,c5 (voie 3)
+dotnet run -c Release --project tools/Emotion.Probe -- session recout.wav voie2.wav voie3.wav \
+    journal=set-2-deck.jsonl paquets=set-2-regenere.pak
+python3 outils/session.py set-2 --pak=set-2/set-2-regenere.pak
+```
+
+Les trois fichiers du multipiste passent dans le meme DualAudioSource que la soiree — cue
+alternant, machine du relais, fondu mesure — en pas cadence (`HorlogeRejeu`), quatre fois
+plus vite que le direct, et le journal du crate est rejoue a ses instants comme les endpoints
+/deck l'appliquent. Une session est donc un fixture : « N takes → N relais » se verifie sur
+la matiere reelle, et le `.pak` se regenere propre. C'est ce qui a permis, le 27 septembre
+2026, de juger la correction des filets du cue alternant sur set-2 sans rien rebrancher.
+
 ## `session.py` — ce qu'une session studio a donne, en chiffres
 
 ```sh

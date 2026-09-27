@@ -23,6 +23,20 @@ namespace Emotion.Signal;
 /// vaut alors 1, tout de suite, et y reste. Trois secondes a plus de 0,8 hors relais, et
 /// l'on permute. Un vrai fondu ne ressemble pas a ca : il monte depuis zero, et le relais
 /// est engage avant d'atteindre 0,8.
+///
+/// ET IL NE S'ARME QU'APRES UN SILENCE. Avec des voies prises apres le fader, la voie qui
+/// devient le cue apres un retrait porte encore le disque qui sort : elle est dans le
+/// master, et le filet — juste en principe — renvoyait le cue sur la voie du master, d'ou
+/// un relais de plus par passage (17 faux relais sur set-2, le 26 septembre 2026). Le
+/// filet attend donc que la voie du cue se soit tue une seconde depuis le dernier relais :
+/// le disque sortant est arrete, ce qui joue ensuite sur cette voie est bien le suivant.
+///
+/// UN SECOND FILET A ETE ESSAYE ET RETIRE : « la voie du cue est muette cinq secondes
+/// pendant que l'autre joue, donc ce n'est pas le cue ». Une voie muette pendant que
+/// l'autre joue est l'attente normale du prochain disque ; le filet en faisait un relais
+/// toutes les huit secondes — 163 relais pour 26 gestes sur le set de 17 h. Ajoute a chaud
+/// sur un cas vu une fois, sans mesure : exactement ce que ContinuityWatch avait deja
+/// appris.
 /// </summary>
 public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
 {
@@ -32,19 +46,12 @@ public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
     /// <summary>Trois secondes d'images d'analyse (47 par seconde) avant de conclure.</summary>
     public const int ImagesDedans = 141;
 
-    /// <summary>
-    /// LE SECOND FILET : la voie du cue est muette depuis cinq secondes et l'autre porte du
-    /// son. Avec des voies prises apres le fader, la parite de l'alternance se perd (un cut
-    /// sec, deux disques de suite sur la meme platine, une permutation du premier filet) et
-    /// le cue ecoute alors une voie vide pendant que le disque suivant joue sur l'autre : la
-    /// machine attend un retrait qui ne vient jamais. Vu au studio le 26 septembre, P1 reste
-    /// affiche pendant tout le dernier morceau.
-    /// </summary>
-    public const int ImagesMuettes = 235;
+    /// <summary>Une seconde de voie muette (47 images) depuis le dernier relais, et le filet s'arme.</summary>
+    public const int ImagesSilence = 47;
     public const float Muet = 0.02f;
-    public const float Vivant = 0.05f;
     private readonly float[] _niveau = new float[2];
     private int _imagesMuettes;
+    private bool _arme = true;
 
     private readonly IAudioSource[] _voies;
     private readonly Action<string>? _log;
@@ -66,6 +73,9 @@ public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
     public int Bascules { get; private set; }
 
     public IAudioSource Active => _voies[_active];
+
+    /// <summary>Le filet peut permuter : au depart, ou apres qu'une voie du cue s'est tue depuis le dernier relais.</summary>
+    public bool FiletArme => _arme;
 
     public string Name => $"voie {Voie} de ({_voies[0].Name} | {_voies[1].Name})";
 
@@ -89,6 +99,9 @@ public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
     {
         Basculer("apres le relais, le prochain disque est sur l'autre voie");
         Active.NewTrack();
+        // La voie nouvelle porte encore le disque qui sort : le filet attend qu'elle se taise.
+        _arme = false;
+        _imagesMuettes = 0;
     }
 
     /// <summary>
@@ -98,14 +111,12 @@ public sealed class CueAlternant : IAudioSource, ILearnsTracks, IAcceptsCue
     /// </summary>
     public bool Observer(float blend, bool relaisEnCours)
     {
-        // Le second filet ne depend pas du relais : une voie muette n'est jamais le cue.
-        var active = _active;
-        _imagesMuettes = _niveau[active] < Muet && _niveau[1 - active] > Vivant ? _imagesMuettes + 1 : 0;
-        if (_imagesMuettes >= ImagesMuettes)
+        if (!_arme)
         {
-            _imagesMuettes = 0;
-            Basculer($"filet : la voie {Voie} est muette et l'autre joue");
-            return true;
+            _imagesMuettes = _niveau[_active] < Muet ? _imagesMuettes + 1 : 0;
+            if (_imagesMuettes >= ImagesSilence) { _arme = true; _imagesMuettes = 0; }
+            _imagesDedans = 0;
+            return false;
         }
 
         if (relaisEnCours) { _imagesDedans = 0; return false; }

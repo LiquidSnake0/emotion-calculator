@@ -144,7 +144,7 @@ public sealed class DualAudioSource : IAudioSource
 
                 var cue = CueFrame;
                 var cuePret = _cue.Analyzer is { } ac && _master.Analyzer is not null && ac.Separation.Pret;
-                var tempoDisponible = cue.Bpm is not null && _master is PulseAudioSource;
+                var tempoDisponible = cue.Bpm is not null && _master is IMaitre;
 
                 // APRES LE RETRAIT, LA MESURE REPART DE ZERO ET NE VAUT RIEN PENDANT UNE
                 // SECONDE ET DEMIE : un zero de depart n'est pas « le cue est sorti du
@@ -168,7 +168,7 @@ public sealed class DualAudioSource : IAudioSource
 
                     // Le passage de relais du tempo, une seule fois par transition.
                     case MachineRelais.Etape.Tempo:
-                        ((PulseAudioSource)_master).AdoptTempo(cue.Bpm!.Value, frame.T);
+                        ((IMaitre)_master).AdoptTempo(cue.Bpm!.Value, frame.T);
                         break;
 
                     // LE RETRAIT : le fondu est fini, le disque qui sortait quitte le suivi et
@@ -188,7 +188,7 @@ public sealed class DualAudioSource : IAudioSource
                 // celui que le casque vient de transmettre, qui lui est propre et deja
                 // constitue. Le rendu ne s'interrompt pas pour autant — seule la formation
                 // du portrait attend que le fader soit arrive au bout.
-                if (_master is PulseAudioSource maitre) maitre.Fondu = blend;
+                if (_master is IMaitre maitre) maitre.Fondu = blend;
 
                 yield return frame with { Blend = blend };
             }

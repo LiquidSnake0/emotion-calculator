@@ -2,7 +2,7 @@
 # Chaque passage d'un set, juge sur le multipiste : les deux decks etaient-ils cales ?
 #
 #   python3 outils/passages.py set-2                 (session dans ~/Documents/emotion-sources/studio)
-#   python3 outils/passages.py set-2 --deck2 2,3 --deck3 4,5
+#   python3 outils/passages.py set-2 --deck2=2,3 --deck3=4,5 --ancrage=90
 #
 # LE DJ VEUT SAVOIR OU IL S'EST FOIRE. On a les deux voies apres fader, separement : pendant
 # un passage, chaque deck est seul sur sa piste. On mesure donc, sur le recouvrement (les
@@ -11,8 +11,14 @@
 # le disque entrant prend la place. Aucun seuil savant : des millisecondes et des dB, a lire
 # avec l'oreille.
 #
-# Les passages sont pris dans le journal du crate (cue → take) quand il existe ; sinon on
-# les detecte : chaque plage ou les deux decks sonnent en meme temps.
+# Les passages sont detectes : chaque plage ou les deux decks sonnent en meme temps.
+#
+# LE TEMPO SE REPLIE AUTOUR DE L'ANCRAGE. Cherche seul entre 60 et 120, il rendait 60,6 ou
+# 120 sur un deck a 89,6 des que le kick n'etait pas net (27 septembre 2026, la moitie des
+# lignes) : des harmoniques, pas des tempos. On pese donc chaque periode par une preference
+# gaussienne en logarithme autour de l'ancrage — un quart d'octave, comme le moteur —, et
+# l'ancrage vient du journal du crate (la fiche mediane) ou de --ancrage=, sinon 90. Connu, il
+# vaut la course du fader (0,12 octave, ±8,7 %) ; par defaut, un quart d'octave.
 import json, math, os, subprocess, sys
 from pathlib import Path
 import numpy as np
@@ -46,14 +52,19 @@ def enveloppe(x):
     flux = np.diff(e, prepend=e[0]); flux[flux < 0] = 0
     return flux, e
 
-def tempo(flux):
-    """Autocorrelation de l'enveloppe entre 60 et 120 BPM ; rend le BPM et sa force."""
+def tempo(flux, ancrage=90.0, largeur=0.25):
+    """Autocorrelation de l'enveloppe entre 40 et 180 BPM, pesee autour de l'ancrage (gaussienne en
+    octaves, de largeur donnee) ; rend le BPM et sa force brute a cette periode."""
     f = flux - flux.mean()
     if len(f) < 400 or f.std() == 0: return None, 0.0
     ac = np.correlate(f, f, mode="full")[len(f) - 1:]
     ac /= ac[0] + 1e-9
-    lo, hi = int(60 / 120 / PAS), int(60 / 60 / PAS)          # 0,5 s a 1 s
-    k = lo + int(np.argmax(ac[lo:hi]))
+    lo, hi = int(60 / 180 / PAS), int(60 / 40 / PAS)          # 0,33 s a 1,5 s
+    if hi >= len(ac): hi = len(ac) - 1
+    lags = np.arange(lo, hi)
+    bpm = 60 / (lags * PAS)
+    poids = np.exp(-0.5 * (np.log2(bpm / ancrage) / largeur) ** 2)
+    k = lo + int(np.argmax(ac[lo:hi] * poids))
     return 60 / (k * PAS), float(ac[k])
 
 def ecart(fa, fb, periode):
@@ -68,6 +79,16 @@ def ecart(fa, fb, periode):
         if c > meilleur: meilleur, arg = c, d
     return arg * PAS * 1000
 
+def ancrage_du_crate(d):
+    """La fiche mediane du journal du crate (le BPM d'ancrage envoye a chaque cue), s'il y en a un."""
+    bpms = []
+    for j in d.glob("*-deck.jsonl"):
+        for l in j.read_text().splitlines():
+            try: b = (json.loads(l).get("corps") or {}).get("Bpm")
+            except ValueError: continue
+            if b: bpms.append(float(b))
+    return sorted(bpms)[len(bpms) // 2] if bpms else None
+
 def db(x): return 20 * math.log10(max(float(np.sqrt(np.mean(x * x))), 1e-9))
 
 def main():
@@ -76,6 +97,10 @@ def main():
     args = dict(a.split("=") for a in sys.argv[2:] if "=" in a)
     ch2 = tuple(int(v) for v in args.get("--deck2", "2,3").split(","))
     ch3 = tuple(int(v) for v in args.get("--deck3", "4,5").split(","))
+    # Un ancrage connu (la fiche du crate, ou donne) vaut la course du fader : 0,12 octave, comme le
+    # moteur amorce ; sans rien, un quart d'octave autour de 90, le milieu du bac.
+    connu = float(args["--ancrage"]) if "--ancrage" in args else ancrage_du_crate(d)
+    ancrage, largeur = (connu, 0.12) if connu else (90.0, 0.25)
     wavs = sorted(d.glob("*-table.wav"))          # une session mise de cote garde son nom d'origine
     if not wavs: sys.exit(f"pas de multipiste dans {d}")
     wav = wavs[0]
@@ -105,10 +130,10 @@ def main():
         t0 = os.path.getmtime(sorted(d.glob("*-parecord.log"))[0])
         debut = datetime.datetime.fromtimestamp(t0)
     except OSError: pass
-    print(f"{len(plages)} recouvrements (les deux decks ensemble ≥ 8 s)\n")
+    print(f"{len(plages)} recouvrements (les deux decks ensemble ≥ 8 s), tempo replié autour de {ancrage:.0f} BPM\n")
     print(" n   de      a      durée   tempo CH2   tempo CH3   écart début → fin (ms)   niveau CH2→CH3 (dB)")
     for k, (i, j) in enumerate(plages, 1):
-        ta, ca = tempo(fa[i:j]); tb, cb = tempo(fb[i:j])
+        ta, ca = tempo(fa[i:j], ancrage, largeur); tb, cb = tempo(fb[i:j], ancrage, largeur)
         per = 60 / ((ta or tb or 90))
         tiers = max(1, (j - i) // 3)
         e1 = ecart(fa[i:i + tiers], fb[i:i + tiers], per)

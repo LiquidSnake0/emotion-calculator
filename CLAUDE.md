@@ -2390,6 +2390,19 @@ voir ; `Dix_disques_dix_relais` le garde. Le quatrième temps, **libre**, arrive
 sort du mélange (< 0,1), c'est-à-dire quand un autre disque tourne au casque — pas avant,
 sinon le même disque serait accueilli deux fois.
 
+**Les deux filets du cue alternant se déclenchaient à contretemps** (analyse du 27 septembre,
+`outils/session.py`). Le premier — « la voie du cue est dans le master trois secondes hors
+relais » — est juste au départ et faux après chaque retrait : la voie nouvelle porte encore le
+disque qui sort, le filet renvoyait le cue sur le master et la machine refaisait un relais
+(17 faux relais pour 14 passages sur set-2). Il ne s'arme donc qu'après une seconde de silence
+de la voie du cue depuis le dernier relais. Le second — « la voie du cue est muette cinq
+secondes pendant que l'autre joue » — prenait l'attente normale du prochain disque pour une
+parité perdue : une bascule toutes les huit secondes, 163 relais pour 26 gestes sur set-3. Il
+a été ajouté à chaud au studio sur un cas vu une fois, et retiré. **Une session se rejoue
+désormais dans le moteur** (`probe session`, trois WAV du multipiste + le journal du crate,
+`HorlogeRejeu` pour le pas cadencé) : c'est sur set-2 rejoué que la correction se juge, pas
+sur un test fabriqué.
+
 Le plan de la session, écrit avant elle avec les résultats attendus : `docs/studio-2026-09-26.md`.
 
 ## Le contrôle de fumée, et pourquoi il a fallu l'écrire

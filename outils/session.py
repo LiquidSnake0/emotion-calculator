@@ -4,6 +4,7 @@
 #
 #   python3 outils/session.py                      toutes les sessions, une ligne chacune
 #   python3 outils/session.py set-2                une session, passage par passage
+#   python3 outils/session.py set-2 --pak=set-2/set-2-rejoue.pak   le meme journal, contre un .pak regenere
 #
 # UNE LIGNE PAR SESSION : la duree du multipiste, les images du .pak et les trous de plus
 # de 60 ms (une image manquee), la part du temps ou un tempo est publie et sa mediane,
@@ -28,8 +29,10 @@ def base(session):
     """Une session mise de cote (set-2-rate-1438) garde le nom de ses fichiers."""
     return re.sub(r"-rate-\d+$", "", session)
 
+PAK = None   # --pak=<chemin> : un .pak regenere par « probe session », a lire a la place de celui de la soiree
+
 def paquets(session):
-    pak = STUDIO / session / f"{base(session)}.pak"
+    pak = Path(PAK) if PAK else STUDIO / session / f"{base(session)}.pak"
     if not pak.exists(): return []
     b = pak.read_bytes(); n = len(b) // TAILLE
     return [(struct.unpack_from("<q", b, i * TAILLE + OFF_TEMPS)[0],
@@ -96,5 +99,8 @@ def passages(session):
           " plus d'accueils que de takes, ce sont des relais que le crate n'a pas demandes.")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1: passages(sys.argv[1])
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    for a in sys.argv[1:]:
+        if a.startswith("--pak="): PAK = a[6:]
+    if args: passages(args[0])
     else: tableau()

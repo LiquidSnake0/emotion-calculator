@@ -4,8 +4,8 @@ namespace Emotion.Signal.Tests;
 
 /// <summary>
 /// Le cue sur les voies de la table : l'alternance apres chaque relais, le filet quand la
-/// voie prise pour le cue est en fait le master, et le flux qui ne laisse passer que la
-/// voie active.
+/// voie prise pour le cue est en fait le master — arme au depart, puis seulement apres un
+/// silence de la voie —, et le flux qui ne laisse passer que la voie active.
 /// </summary>
 public class CueAlternantTests
 {
@@ -112,18 +112,56 @@ public class CueAlternantTests
     }
 
     /// <summary>
-    /// La voie du cue muette cinq secondes pendant que l'autre joue : le cue change de voie,
-    /// meme en plein relais — la parite de l'alternance s'etait perdue.
+    /// La voie du cue muette pendant que l'autre joue, c'est l'attente du prochain disque —
+    /// pas une parite perdue. Un second filet le prenait pour tel et relayait toutes les huit
+    /// secondes (set de 17 h, 26 septembre 2026 : 163 relais pour 26 gestes).
     /// </summary>
     [Fact]
-    public void Une_voie_muette_pendant_que_l_autre_joue_n_est_pas_le_cue()
+    public void Une_voie_muette_pendant_que_l_autre_joue_reste_le_cue_c_est_l_attente()
     {
         var (cue, _, _) = Faire();
         cue.Niveau(1, 0f); cue.Niveau(2, 0.3f);
-        for (var i = 0; i < CueAlternant.ImagesMuettes - 1; i++)
-            Assert.False(cue.Observer(0f, relaisEnCours: true));
-        Assert.True(cue.Observer(0f, relaisEnCours: true));
+        for (var i = 0; i < 20 * CueAlternant.ImagesSilence; i++)
+            Assert.False(cue.Observer(0f, relaisEnCours: false));
+        Assert.Equal(1, cue.Voie);
+        Assert.Equal(0, cue.Bascules);
+    }
+
+    /// <summary>
+    /// Apres un relais, la voie nouvelle porte encore le disque qui sort : elle est dans le
+    /// master, et le filet ne doit pas s'en emouvoir tant qu'elle ne s'est pas tue une fois.
+    /// Sur set-2 (26 septembre 2026) il permutait la, et chaque passage valait deux relais.
+    /// </summary>
+    [Fact]
+    public void Apres_un_relais_le_filet_attend_que_la_voie_du_cue_se_soit_tue()
+    {
+        var (cue, _, _) = Faire();
+        cue.NewTrack();
         Assert.Equal(2, cue.Voie);
+        Assert.False(cue.FiletArme);
+        cue.Niveau(2, 0.5f);
+        for (var i = 0; i < 10 * CueAlternant.ImagesDedans; i++)
+            Assert.False(cue.Observer(0.95f, relaisEnCours: false));
+        Assert.Equal(2, cue.Voie);
+
+        // Le disque sortant s'arrete : une seconde de silence sur la voie, et le filet s'arme.
+        cue.Niveau(2, 0f);
+        for (var i = 0; i < CueAlternant.ImagesSilence; i++) cue.Observer(0f, relaisEnCours: false);
+        Assert.True(cue.FiletArme);
+
+        // Et s'il se retrouve alors dans le master trois secondes, c'est bien une erreur de voie.
+        cue.Niveau(2, 0.5f);
+        for (var i = 0; i < CueAlternant.ImagesDedans - 1; i++)
+            Assert.False(cue.Observer(0.95f, relaisEnCours: false));
+        Assert.True(cue.Observer(0.95f, relaisEnCours: false));
+        Assert.Equal(1, cue.Voie);
+    }
+
+    [Fact]
+    public void Au_depart_le_filet_est_arme()
+    {
+        var (cue, _, _) = Faire();
+        Assert.True(cue.FiletArme);
     }
 
     [Fact]
@@ -131,7 +169,7 @@ public class CueAlternantTests
     {
         var (cue, _, _) = Faire();
         cue.Niveau(1, 0f); cue.Niveau(2, 0f);
-        for (var i = 0; i < 3 * CueAlternant.ImagesMuettes; i++)
+        for (var i = 0; i < 3 * CueAlternant.ImagesSilence; i++)
             Assert.False(cue.Observer(0f, relaisEnCours: false));
         Assert.Equal(1, cue.Voie);
     }
