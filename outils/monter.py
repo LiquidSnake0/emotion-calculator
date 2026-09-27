@@ -41,6 +41,18 @@ def origine(prise):
     if SUFFIXE == "-master.wav" or not j.exists(): return 0.0
     return float(json.loads(j.read_text()).get("origine", 0.0))
 
+def dans_le_fichier(prise, t):
+    """Une seconde de la prise, ramenee dans le fichier monte : moins l'origine, moins les coupes que
+    reconstruire.py a faites avant elle (un passage saute avance tout ce qui suit)."""
+    j = STUDIO / prise / f"{prise}{SUFFIXE.replace('.wav', '.json')}"
+    if SUFFIXE == "-master.wav" or not j.exists(): return t
+    info = json.loads(j.read_text())
+    t2 = t - float(info.get("origine", 0.0))
+    for (c0, c1) in info.get("coupes", []):
+        if t >= c1: t2 -= (c1 - c0)
+        elif t > c0: t2 -= (t - c0)
+    return max(0.0, t2)
+
 def mono(wav, debut, duree):
     raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{debut:.3f}", "-t", f"{duree:.3f}", "-i", str(wav),
                           "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"], capture_output=True, check=True).stdout
@@ -139,8 +151,8 @@ def main():
     coupes = []   # (tA fin de la prise i, tB debut de la prise i+1)
     for i, r in enumerate(raccords):
         wa, wb = master(prises[i]), master(prises[i + 1])
-        oa, ob = origine(prises[i]), origine(prises[i + 1])
-        fa = (max(0.0, r["a"][0] - oa), r["a"][1] - oa); fb = (max(0.0, r["b"][0] - ob), r["b"][1] - ob)
+        fa = (dans_le_fichier(prises[i], r["a"][0]), dans_le_fichier(prises[i], r["a"][1]))
+        fb = (dans_le_fichier(prises[i + 1], r["b"][0]), dans_le_fichier(prises[i + 1], r["b"][1]))
         tA, tB, ratio, score = aligner(wa, fa, wb, fb)
         if tA is None: sys.exit(f"raccord {r.get('morceau')} : fenetres trop courtes")
         tB, q = affiner(wa, tA, wb, tB, ratio)
