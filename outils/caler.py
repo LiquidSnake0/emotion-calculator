@@ -76,9 +76,12 @@ def identifier(voie_f, disque, debut, candidats, tempo_voie, grilles):
     essais = []
     for orig in candidats:
         g = grilles.get(norm(orig.name))
+        # ρ = « l'original est la voie jouee ρ fois plus vite » = tempo natif / tempo joue. Un disque
+        # a 97 BPM joue a 90 donne ρ = 1,078. Le 27 septembre 2026 ce rapport etait ecrit a l'envers,
+        # et cinq disques sur huit ne se reconnaissaient pas : c'est le DJ qui a pose la question du BPM.
         if g and g.get("bpm") and tempo_voie:
-            rho0 = tempo_voie / g["bpm"]
-            ratios = rho0 * np.arange(0.975, 1.0251, 0.0025)
+            rho0 = g["bpm"] / tempo_voie
+            ratios = rho0 * np.arange(0.97, 1.0301, 0.0025)
         else:
             rho0 = None; ratios = np.arange(0.84, 1.1801, 0.004)
         dur = duree(orig)
@@ -96,7 +99,7 @@ def identifier(voie_f, disque, debut, candidats, tempo_voie, grilles):
         s_, a_, residu, points = aj
         q = float(np.mean([p[2] for p in points]))
         debut_orig = a_ + s_ * d0
-        ok = len(points) >= 3 and residu <= 8 and debut_orig >= -3 and (rho0 is None or abs(s_ * rho0 - 1) <= 0.03)
+        ok = len(points) >= 3 and residu <= 8 and debut_orig >= -3 and (rho0 is None or abs(s_ * rho0 - 1) <= 0.04)
         print(f"      {orig.name[:34]:36s} fen {fen[0]:4.0f}-{fen[1]:4.0f} env {sc:.2f} → {len(points)} ancrages q {q:.2f} residu {residu:.0f} ms vitesse {(s_-1)*100:+.2f} % debut orig {debut_orig:+.0f} s {'OK' if ok else '—'}", flush=True)
         if ok: return dict(original=orig, s=s_, a=a_, points=points, q=q)
     return None

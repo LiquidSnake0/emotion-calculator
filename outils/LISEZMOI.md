@@ -352,6 +352,24 @@ plus vite que le direct, et le journal du crate est rejoue a ses instants comme 
 la matiere reelle, et le `.pak` se regenere propre. C'est ce qui a permis, le 27 septembre
 2026, de juger la correction des filets du cue alternant sur set-2 sans rien rebrancher.
 
+## `caler.py` — les originaux cales sur les voies
+
+```sh
+python3 outils/caler.py apres-2 --fin=380          # quel original joue sur chaque voie, a quelle vitesse, ou ; ecarts de grille
+python3 outils/caler.py apres-2 --recalcule        # les transitions refaites avec le cache des grilles actuel
+```
+
+Pour chaque disque d'une prise : l'original (enveloppe d'energie contre les 29 originaux, puis
+cinq ancrages fins), sa vitesse (r = secondes d'original par seconde de voie ; un disque a
+97 BPM joue a 90 donne 1,078) et la droite t_orig = a + r * t_prise, au millieme. Puis la grille
+rekordbox de chaque original ramenee dans la prise, et l'ecart des grilles pendant chaque
+recouvrement. **Le calage mesure ainsi a ses limites** : sur ce repertoire ni les frappes ni les
+grilles ne se verifient a 20 ms pres, et le 27 septembre 2026 le DJ a tranche les trois
+decalages douteux a l'oreille, sur des extraits (`reconstruire.py --avance --vers`) — tous a
+zero. Le calage sert surtout a `--original` et `--prolonger` : l'original a la place de la voie
+(un flanger a effacer, un jog touche), ou apres elle (un disque coupe avant sa fin), avec la
+couleur du canal mesuree et rendue (`firequalizer`).
+
 ## `session.py` — ce qu'une session studio a donne, en chiffres
 
 ```sh

@@ -25,6 +25,9 @@
 #                   effacer, un jog touche. Fondus d'une seconde de chaque cote ; dB ajuste le niveau
 #   --prolonger=k:t1[:fondu[:dB]]  le disque k continue au-dela de sa coupure jusqu'a t1 avec son
 #                   original, en s'eteignant sur `fondu` secondes (8) ; dB le met en fond (-6 par defaut)
+#   --tenir=k:t0:t1 le disque k garde, entre t0 et t1, le niveau qu'il avait juste avant t0 : on
+#                   annule une descente de fader (une flute qu'on veut entendre finir sa phrase)
+#   --vers=fichier  ecrit la sous ce nom (un extrait a ecouter) au lieu de <prise>-v2.wav
 #   --sans-calage   ne corrige ni decalage ni vitesse (pour comparer)
 #   --mesure        n'ecrit rien, imprime le tableau ; --detail ajoute l'ecart de chaque fenetre de 12 s
 #
@@ -213,6 +216,7 @@ def main():
         champs = a.split(":"); sorties[int(champs[0])] = (float(champs[1]), float(champs[2]) if len(champs) > 2 else 8.0)
     gains = {int(a[7:].split(":")[0]): float(a[7:].split(":")[1]) for a in sys.argv[2:] if a.startswith("--gain=")}
     remplacements, prolongations = [], []
+    tenues = [(int(c[0]), float(c[1]), float(c[2])) for c in (a[8:].split(":") for a in sys.argv[2:] if a.startswith("--tenir="))]
     for a in sys.argv[2:]:
         if a.startswith("--original="):
             c = a[11:].split(":"); remplacements.append((int(c[0]), float(c[1]), float(c[2]), float(c[3]) if len(c) > 3 else None))
@@ -253,7 +257,13 @@ def main():
     for k, g in gains.items():
         if 0 <= k < len(disques): disques[k].gain_db = g
 
-    # LE CALAGE, dans l'ordre : chaque disque entrant contre le disque sortant deja corrige.
+    # LA MAIN DU DJ D'ABORD : un decalage ou une vitesse donnes (--avance, --vitesse) s'appliquent
+    # toujours, meme sans recalage automatique. Le 27 septembre 2026, quinze extraits « a ±80 ms »
+    # rendus avec --sans-calage etaient le meme fichier, et le DJ a compare cinq fois la v6.
+    for k, d in enumerate(disques):
+        if k in avances or k in vitesses:
+            d.ancre = d.debut; d.decalage = avances.get(k, 0.0) / 1000.0; d.vitesse = 1.0 + vitesses.get(k, 0.0) / 100.0
+    # LE CALAGE MESURE, dans l'ordre : chaque disque entrant contre le disque sortant deja corrige.
     if "--sans-calage" not in flags:
         for k, d in enumerate(disques):
             sortant = next((p for p in reversed(disques[:k]) if p.voie != d.voie and p.fin > d.debut), None)
@@ -263,9 +273,7 @@ def main():
             if m is None: continue
             d.ecarts = m
             if k in bruts or d.plateau < cible - 12: continue          # laisse tel quel, ou a peine entrouvert au fader
-            if k in avances or k in vitesses:                          # la main du DJ passe avant la mesure
-                d.ancre = m["centre"]; d.decalage = avances.get(k, 0.0) / 1000.0; d.vitesse = 1.0 + vitesses.get(k, 0.0) / 100.0
-                continue
+            if k in avances or k in vitesses: continue                 # la main du DJ passe avant la mesure
             derive_totale = m["pente"] * m["duree"]
             corriger_vitesse = m["residu"] <= DISPERSION_MAX_MS and abs(derive_totale) >= DERIVE_MIN_MS and abs(m["pente"]) / 1000.0 <= VITESSE_MAX
             ecart_ref = m["au_centre"] if corriger_vitesse else m["mediane"]
@@ -333,6 +341,23 @@ def main():
             if kk != k: continue
             a, b = (w0 - 1 - d.debut) / d.vitesse, (w1 + 1 - d.debut) / d.vitesse
             exprs.append(f"(1-{rampe(a, a + 1)}*(1-{rampe(b - 1, b)}))")
+        for (kk, t0, t1) in tenues:
+            if kk != k: continue
+            # LE FADER ANNULE : le niveau mesure par demi-seconde entre t0 et t1, ramene a celui des
+            # trois secondes d'avant, en dB, par une ligne brisee de rampes (jamais plus de +15 dB).
+            x = sons[d.voie]; i = lambda t: int((t - debut) * SR)
+            ref = 20 * np.log10(np.sqrt(np.mean(x[i(t0 - 3):i(t0)] ** 2)) + 1e-9)
+            pas = 0.5; pts = []
+            t = t0
+            while t < t1:
+                niv = 20 * np.log10(np.sqrt(np.mean(x[i(t):i(min(t + pas, t1))] ** 2)) + 1e-9)
+                pts.append((t, float(np.clip(ref - niv, 0.0, 15.0)))); t += pas
+            if not pts: continue
+            g = f"({pts[0][1]:.2f}*{rampe((t0 - 0.25 - d.debut) / d.vitesse, (t0 + 0.25 - d.debut) / d.vitesse)})"
+            for (ta, ga), (tb, gb) in zip(pts, pts[1:]):
+                g += f"+({gb - ga:+.2f})*{rampe((ta + pas / 2 - d.debut) / d.vitesse, (tb + pas / 2 - d.debut) / d.vitesse)}"
+            exprs.append(f"pow(10,({g})/20)")
+            print(f" disque {k} tenu de {t0:.1f} a {t1:.1f} s : jusqu'a +{max(v for _, v in pts):.1f} dB pour rester a {ref:.1f} dBFS")
         c += f",volume=eval=frame:volume='{'*'.join(exprs)}'"
         c += f",adelay={int(round((deb_sortie - origine) * 1000))}|{int(round((deb_sortie - origine) * 1000))}[d{k}]"
         chaines.append(c); noms.append(f"[d{k}]")
@@ -358,8 +383,9 @@ def main():
     ORIGINAUX = Path(os.environ.get("EMOTION_ORIGINAUX", Path.home() / "Documents/emotion-sources/originaux"))
     def disque_cale(k):
         d = disques[k]
+        # le meme disque, meme si la plage rendue ici l'entame (un extrait) : meme voie, et il se recouvrent
         for inf in (calage or {}).get("disques") or []:
-            if inf and inf["voie"] == d.voie and abs(inf["debut"] - d.debut) < 2.0: return inf
+            if inf and inf["voie"] == d.voie and inf["debut"] <= d.fin and inf["fin"] >= d.debut: return inf
         sys.exit(f"le disque {k} n'est pas cale dans {prise}-calage.json (relancer caler.py sur la meme plage)")
     def niveau_original(inf, t0, t1):
         """Le niveau RMS (dB) de l'original sur ce qu'il jouera entre t0 et t1 de la prise."""
@@ -368,7 +394,37 @@ def main():
                               "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"], capture_output=True, check=True).stdout
         y = np.frombuffer(raw, dtype=np.float32)
         return 20 * np.log10(np.sqrt(np.mean(y ** 2)) + 1e-9) if len(y) else -60.0
-    def chaine_original(k, inf, t0, t1, entree_ms, sortie_ms, gain_db, tag):
+    def couleur(inf, d, t0):
+        """L'EQ du canal de la table, mesuree : le spectre moyen de la voie rapporte a celui de l'original
+        aligne, sur les dix secondes avant t0 (la ou la voie est propre), par bande d'octave. Rend un
+        filtre firequalizer qui donne a l'original le meme grain — l'EQ du DJ, pas une invention."""
+        a, b = max(d.debut + 2, t0 - 12.0), t0 - 2.0
+        if b - a < 4: return ""
+        g, dr = VOIES[d.voie]
+        def spectre(cmd_in):
+            raw = subprocess.run(["ffmpeg", "-v", "error"] + cmd_in + ["-ac", "1", "-ar", "44100", "-f", "f32le", "-"], capture_output=True, check=True).stdout
+            x = np.frombuffer(raw, dtype=np.float32); n = len(x) // 4096 * 4096
+            if n == 0: return None
+            X = np.abs(np.fft.rfft(x[:n].reshape(-1, 4096) * np.hanning(4096), axis=1)).mean(axis=0)
+            return X, np.fft.rfftfreq(4096, 1 / 44100)
+        sv = spectre(["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(wav), "-filter_complex", f"pan=mono|c0=0.5*c{g}+0.5*c{dr}"])
+        o0, o1 = inf["a_prise"] + inf["vitesse"] * a, inf["a_prise"] + inf["vitesse"] * b
+        so = spectre(["-ss", f"{o0:.3f}", "-t", f"{o1 - o0:.3f}", "-i", str(ORIGINAUX / inf["original"])])
+        if sv is None or so is None: return ""
+        (Xv, f), (Xo, _) = sv, so
+        bandes = [40, 80, 160, 315, 630, 1250, 2500, 5000, 10000, 16000]
+        gains = []
+        for lo, hi in zip([0] + bandes[:-1], bandes):
+            m = (f >= lo) & (f < hi)
+            gv, go = np.sqrt(np.mean(Xv[m] ** 2)), np.sqrt(np.mean(Xo[m] ** 2))
+            gains.append(float(np.clip(20 * np.log10((gv + 1e-9) / (go + 1e-9)), -18, 12)))
+        moyen = float(np.mean(gains[1:7]))                 # le niveau global est deja regle a part : on ne garde que la forme
+        gains = [x - moyen for x in gains]
+        print(f"   couleur du canal, par bande (dB) : " + " ".join(f"{x:+.0f}" for x in gains))
+        entrees_eq = ";".join(f"entry({int(np.sqrt(max(lo, 20) * hi))},{x:.1f})" for (lo, hi), x in zip(zip([0] + bandes[:-1], bandes), gains))
+        return f",firequalizer=gain_entry='{entrees_eq}'"
+
+    def chaine_original(k, inf, t0, t1, entree_ms, sortie_ms, gain_db, tag, eq=""):
         """Une chaine ffmpeg qui joue l'original du disque k entre t0 et t1 (prise), avec ses rampes."""
         d = disques[k]
         orig = ORIGINAUX / inf["original"]
@@ -380,7 +436,7 @@ def main():
         vitesse = inf["vitesse"] * d.vitesse
         duree_chaine = (t1 - t0) / d.vitesse
         c = (f"[{idx}:a]atrim=start={max(0.0, o0):.4f}:end={o1:.4f},asetpts=PTS-STARTPTS,asetrate={sr * vitesse:.3f},aresample=48000,aformat=channel_layouts=stereo"
-             f",volume={gain_db:.2f}dB,volume=eval=frame:volume='{rampe(0, entree_ms / 1000)}*(1-{rampe(duree_chaine - sortie_ms / 1000, duree_chaine)})'")
+             f"{eq},volume={gain_db:.2f}dB,volume=eval=frame:volume='{rampe(0, entree_ms / 1000)}*(1-{rampe(duree_chaine - sortie_ms / 1000, duree_chaine)})'")
         deb = d.sortie_temps(t0) - origine
         c += f",adelay={int(round(deb * 1000))}|{int(round(deb * 1000))}[{tag}]"
         chaines.append(c); noms.append(f"[{tag}]")
@@ -388,15 +444,19 @@ def main():
         inf = disque_cale(k); d = disques[k]
         g_db = (d.plateau + d.gain_db - niveau_original(inf, t0, t1)) if gain is None else gain
         print(f" original de {inf['original'][:40]} pose sur le disque {k} de {t0:.0f} a {t1:.0f} s ({g_db:+.1f} dB)")
-        chaine_original(k, inf, t0 - 1.0, t1 + 1.0, 1000, 1000, g_db, f"o{n}")
+        chaine_original(k, inf, t0 - 1.0, t1 + 1.0, 1000, 1000, g_db, f"o{n}", eq=couleur(inf, d, t0))
     for n, (k, t1, fondu, gain_rel) in enumerate(prolongations):
         inf = disque_cale(k); d = disques[k]
         t0 = d.fin - 1.0
-        g_db = d.plateau + d.gain_db - niveau_original(inf, t0, t1) + gain_rel
+        # le niveau se compare sur la fin du disque tel qu'il a joue, pas sur la queue qu'on ajoute
+        # (elle peut etre presque silencieuse : +24 dB de gain mesures sur trois secondes d'outro)
+        g_db = d.plateau + d.gain_db - niveau_original(inf, max(d.debut, t0 - 30.0), t0) + gain_rel
         print(f" original de {inf['original'][:40]} prolonge le disque {k} de {t0:.0f} a {t1:.0f} s, fondu {fondu:.0f} s ({g_db:+.1f} dB)")
-        chaine_original(k, inf, t0, t1, 1000, int(fondu * 1000), g_db, f"p{n}")
+        chaine_original(k, inf, t0, t1, 1000, int(fondu * 1000), g_db, f"p{n}", eq=couleur(inf, d, t0))
     chaines.append(f"{''.join(noms)}amix=inputs={len(noms)}:normalize=0:duration=longest[out]")
-    sortie = STUDIO / prise / f"{prise}-v2.wav"
+    # --vers=<fichier> : ecrire ailleurs, pour un extrait a faire ecouter (une transition avec un
+    # disque avance de 40 ms, par exemple) sans toucher au master reconstruit de la prise
+    sortie = Path(args["--vers"]) if "--vers" in args else STUDIO / prise / f"{prise}-v2.wav"
     # EN FLOTTANTS : deux disques remontes qui se recouvrent depassent 0 dBFS, et un fichier
     # intermediaire en 24 bits ecreterait la ou monter.py n'a pas encore pose son gain final.
     cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(wav)] + entrees_sup + ["-filter_complex", ";".join(chaines), "-map", "[out]",
@@ -405,6 +465,7 @@ def main():
     d = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(sortie)],
                              capture_output=True, text=True).stdout)
     print(f"\n→ {sortie} : {d / 60:.1f} min, commence a {origine:.2f} s de la prise")
+    if "--vers" in args: return 0
     (STUDIO / prise / f"{prise}-v2.json").write_text(json.dumps({
         "prise": prise, "debut": debut, "fin": fin, "cible": cible, "origine": origine,
         "disques": [{"voie": dd.voie, "debut": dd.debut, "fin": dd.fin, "plateau": dd.plateau, "gain_db": dd.gain_db,
