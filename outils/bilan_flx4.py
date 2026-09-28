@@ -56,11 +56,13 @@ def historique(debut, fin):
          "where pl.hidden = 2 order by p.pl_datetime_added")
     with sqlite3.connect(f"file:{MIXXX_DB}?mode=ro", uri=True) as c:
         rangs = c.execute(q).fetchall()
-    out = []
-    for quand, artiste, titre, bpm in rangs:
-        t = datetime.strptime(quand, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
-        if debut - 5 <= t <= fin + 5:
-            out.append((t, artiste or "", titre or "", bpm or 0.0))
+    tous = [(datetime.strptime(q, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp(),
+             a or "", t or "", b or 0.0) for q, a, t, b in rangs]
+    out = [x for x in tous if debut - 5 <= x[0] <= fin + 5]
+    # le morceau qui jouait deja au lancement de la session : le dernier entre avant
+    avant = [x for x in tous if x[0] < debut - 5]
+    if avant:
+        out.insert(0, (debut,) + avant[-1][1:])
     return out
 
 
@@ -71,7 +73,8 @@ def main():
     if not wav.exists():
         sys.exit(f"pas de {wav}")
     duree = S.duree_wav(wav)
-    debut = float(sys.argv[2]) if len(sys.argv) > 2 else (dossier / f"{session}-parecord.log").stat().st_mtime - duree
+    # parecord.log s'ecrit au lancement et plus apres : son heure est le debut de la session
+    debut = float(sys.argv[2]) if len(sys.argv) > 2 else (dossier / f"{session}-parecord.log").stat().st_mtime
     P = S.paquets(session)
     t0 = P[0][0] if P else 0
 
