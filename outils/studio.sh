@@ -43,8 +43,14 @@ PORT=5099
 # FLX4 (le peripherique ALSA « flx4 » de ~/.asoundrc), dont la sortie a quatre canaux : le master
 # a l'avant, le casque a l'arriere. On ecoute le moniteur de cette sortie. Le casque est le vrai
 # cue — ce que la DJM ne donnait pas par l'USB — donc un cue fixe, sans alternance ni routage de
-# table. Condition : HEADPHONES MIX a fond cote CUE, sinon le master se mele au cue.
+# table. MAIS LE DJ MIXE AU CASQUE AVEC LE MASTER MELE (HEADPHONES MIX au milieu), et ne changera
+# pas d'habitude pour un enregistrement : le casque n'est alors pas un cue propre. Par defaut le
+# moteur ecoute donc le master seul (STUDIO_SANS_CUE=1) et les quatre canaux sont enregistres ;
+# le cue se recalcule apres coup, casque moins la part fixe du master (HEADPHONES MIX ne bouge
+# pas pendant le set), puis la session se rejoue avec « probe session ». STUDIO_SANS_CUE=0 si le
+# casque est un jour a fond cote CUE.
 if [[ "${STUDIO_TABLE:-}" == "flx4" ]]; then
+  : "${STUDIO_SANS_CUE:=1}"
   : "${STUDIO_SOURCE:=$(pactl list sinks short 2>/dev/null | awk '{print $2}' | grep -i "DDJ-FLX4" | head -1).monitor}"
   : "${STUDIO_PAIRES:=1:front-left,front-right 2:rear-left,rear-right}"
   : "${STUDIO_MASTER:=1}" "${STUDIO_CUE:=2}" "${STUDIO_ALTERNANCE:=0}"
@@ -234,7 +240,9 @@ if [[ -n "$ROUTAGE" ]] && [[ -x .venv-rekordbox/bin/python ]]; then
 fi
 
 # Les paires, si --verif ne les a pas deja posees — et les trois qui servent doivent exister.
-pactl list sources short | grep -q "djm_$MASTER_PAIRE" || { retirer_remaps; for k in 1 2 3 4 5; do remap "$k" 2>/dev/null || true; done; }
+# Elles doivent aussi pointer sur la bonne table : des paires laissees par la DJM ecouteraient
+# sinon la mauvaise carte le jour ou l'on joue sur la FLX4, et inversement.
+pactl list modules short | grep "module-remap-source" | grep -q "source_name=djm_$MASTER_PAIRE master=$SOURCE " || { retirer_remaps; for k in 1 2 3 4 5; do remap "$k" 2>/dev/null || true; done; }
 PAIRES_UTILES="$MASTER_PAIRE $CUE_PAIRE"; [[ "$ALTERNANCE" == "1" ]] && PAIRES_UTILES="$PAIRES_UTILES $AUTRE_VOIE"
 for p in $PAIRES_UTILES; do
   pactl list sources short | grep -q "djm_$p" || { echo "pas de paire $p sur cette source (canaux : $(canaux_de_la_source))" >&2; exit 1; }
