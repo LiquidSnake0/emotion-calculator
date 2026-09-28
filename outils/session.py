@@ -47,6 +47,19 @@ def moteur(session):
     m = STUDIO / session / f"{base(session)}-moteur.log"
     return m.read_text(errors="replace") if m.exists() else ""
 
+def duree_wav(chemin):
+    """La duree lue dans l'en-tete du WAV : 12 canaux a la DJM, 4 au FLX4 — ne jamais la supposer."""
+    import struct as st
+    with open(chemin, "rb") as f:
+        tete = f.read(4096)
+    i = tete.find(b"fmt ")
+    if i < 0: return 0.0
+    canaux, taux = st.unpack_from("<HI", tete, i + 10)
+    bits = st.unpack_from("<H", tete, i + 22)[0]
+    j = tete.find(b"data")
+    donnees = chemin.stat().st_size - (j + 8 if j >= 0 else 44)
+    return donnees / (taux * canaux * bits // 8) if taux and canaux and bits else 0.0
+
 def relais(P):
     """Les instants (ms) des accueils (le fondu s'allume) et des retraits (la platine change)."""
     accueils = [P[i][0] for i in range(1, len(P)) if (P[i][2] >> 2) & 1 and not (P[i - 1][2] >> 2) & 1]
@@ -56,7 +69,7 @@ def relais(P):
 def ligne(session):
     P = paquets(session); n = len(P)
     tbl = STUDIO / session / f"{base(session)}-table.wav"
-    wav = (tbl.stat().st_size - 44) / (48000 * 12 * 3) / 60 if tbl.exists() else 0.0
+    wav = duree_wav(tbl) / 60 if tbl.exists() else 0.0
     trous = sum(1 for i in range(1, n) if P[i][0] - P[i - 1][0] > 60)
     bpm = sorted(v for _, v, _ in P if v > 0)
     acc, ret = relais(P)

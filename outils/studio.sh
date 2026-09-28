@@ -7,6 +7,7 @@
 #   ./outils/studio.sh <session> [bpm] [camelot]   la session : enregistre, analyse, montre
 #   STUDIO_ALTERNANCE=0 …                       plan B : un cue fixe sur STUDIO_CUE, sans alternance
 #   STUDIO_SANS_CUE=1 …                         demo : le master seul, il apprend lui-meme
+#   STUDIO_TABLE=flx4 …                         a la maison : Mixxx + DDJ-FLX4, master et casque
 #
 # LA TABLE EST UNE DJM-750MK2, ET LE NOYAU LA CONNAIT (quirk depuis Linux 5.14) : cinq paires
 # stereo remontent par USB, choisies depuis l'ordinateur par des commutateurs ALSA. Paire k
@@ -38,6 +39,17 @@ PORT=5099
 # les voies 1 et 2 : le premier disque joue sur la 1, le premier prepare est sur la 2. Le cue
 # passe ensuite sur l'autre voie a chaque relais (CueAlternant) ; si le sens de depart est
 # faux, le filet permute en trois secondes. STUDIO_CUE=1 si le set commence sur la voie 2.
+# STUDIO_TABLE=flx4 : A LA MAISON, LE DDJ-FLX4 PILOTE MIXXX. Mixxx sort par PulseAudio vers le
+# FLX4 (le peripherique ALSA « flx4 » de ~/.asoundrc), dont la sortie a quatre canaux : le master
+# a l'avant, le casque a l'arriere. On ecoute le moniteur de cette sortie. Le casque est le vrai
+# cue — ce que la DJM ne donnait pas par l'USB — donc un cue fixe, sans alternance ni routage de
+# table. Condition : HEADPHONES MIX a fond cote CUE, sinon le master se mele au cue.
+if [[ "${STUDIO_TABLE:-}" == "flx4" ]]; then
+  : "${STUDIO_SOURCE:=$(pactl list sinks short 2>/dev/null | awk '{print $2}' | grep -i "DDJ-FLX4" | head -1).monitor}"
+  : "${STUDIO_PAIRES:=1:front-left,front-right 2:rear-left,rear-right}"
+  : "${STUDIO_MASTER:=1}" "${STUDIO_CUE:=2}" "${STUDIO_ALTERNANCE:=0}"
+  STUDIO_ROUTAGE=""
+fi
 MASTER_PAIRE="${STUDIO_MASTER:-5}"
 CUE_PAIRE="${STUDIO_CUE:-2}"
 # La voie du premier disque : le cue alterne entre elle et STUDIO_CUE. Par defaut la 1 ;
@@ -215,7 +227,8 @@ fi
 # Le routage des paires, envoye a la table par USB (ce que le quirk du noyau ferait). Sur ce
 # noyau, sans quirk, la table stream ce qu'elle veut tant qu'on ne lui a rien dit. Le noeud
 # USB doit etre accessible (sudo chmod o+w /dev/bus/usb/<bus>/<adresse>, ou root).
-ROUTAGE="${STUDIO_ROUTAGE:-2=postfader 3=postfader 5=recout niveau=-10}"
+# STUDIO_ROUTAGE="" coupe le routage (une autre table que la DJM) : vide n'est pas absent.
+ROUTAGE="${STUDIO_ROUTAGE-2=postfader 3=postfader 5=recout niveau=-10}"
 if [[ -n "$ROUTAGE" ]] && [[ -x .venv-rekordbox/bin/python ]]; then
   .venv-rekordbox/bin/python outils/djm_routage.py $ROUTAGE 2>&1 | sed 's/^/  routage : /' || echo "routage USB refuse : voir outils/djm_routage.py" >&2
 fi
