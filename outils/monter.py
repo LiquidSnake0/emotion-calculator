@@ -51,6 +51,8 @@ def dans_le_fichier(prise, t):
     for (c0, c1) in info.get("coupes", []):
         if t >= c1: t2 -= (c1 - c0)
         elif t > c0: t2 -= (t - c0)
+    for (ti, duree) in info.get("insertions", []):
+        if t >= ti: t2 += duree
     return max(0.0, t2)
 
 def mono(wav, debut, duree):

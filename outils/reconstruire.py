@@ -27,6 +27,9 @@
 #                   original, en s'eteignant sur `fondu` secondes (8) ; dB le met en fond (-6 par defaut)
 #   --tenir=k:t0:t1 le disque k garde, entre t0 et t1, le niveau qu'il avait juste avant t0 : on
 #                   annule une descente de fader (une flute qu'on veut entendre finir sa phrase)
+#   --inserer=k:t:n  a l'instant t (un temps du disque k), insere n temps de l'ORIGINAL du disque k a
+#                   partir de la ou il en est, puis la prise reprend a t : un banger qui n'a joue
+#                   qu'une minute en joue deux, et tout ce qui suit arrive n temps plus tard
 #   --couper=t0:t1  retire la plage [t0, t1] de la prise entiere (toutes les voies), fondu de 5 ms :
 #                   un passage rate qu'on saute, sur un nombre entier de temps pour que rien ne bouge
 #   --vers=fichier  ecrit la sous ce nom (un extrait a ecouter) au lieu de <prise>-v2.wav
@@ -218,15 +221,20 @@ def main():
         champs = a.split(":"); sorties[int(champs[0])] = (float(champs[1]), float(champs[2]) if len(champs) > 2 else 8.0)
     gains = {int(a[7:].split(":")[0]): float(a[7:].split(":")[1]) for a in sys.argv[2:] if a.startswith("--gain=")}
     remplacements, prolongations = [], []
+    calage = None
     tenues = [(int(c[0]), float(c[1]), float(c[2])) for c in (a[8:].split(":") for a in sys.argv[2:] if a.startswith("--tenir="))]
     coupes = sorted((float(c[0]), float(c[1])) for c in (a[9:].split(":") for a in sys.argv[2:] if a.startswith("--couper=")))
+    insertions = [(int(c[0]), float(c[1]), int(c[2])) for c in (a[10:].split(":") for a in sys.argv[2:] if a.startswith("--inserer="))]
+    if insertions and calage is None:
+        cj = STUDIO / prise / f"{prise}-calage.json"
+        if not cj.exists(): sys.exit(f"pas de {cj} : python3 outils/caler.py {prise} d'abord")
+        calage = json.loads(cj.read_text())
     fondu_coupe = float(args.get("--fondu-coupe", 0.02))   # s : assez court pour ne pas faire de peigne, assez long pour ne pas cliquer
     for a in sys.argv[2:]:
         if a.startswith("--original="):
             c = a[11:].split(":"); remplacements.append((int(c[0]), float(c[1]), float(c[2]), float(c[3]) if len(c) > 3 else None))
         if a.startswith("--prolonger="):
             c = a[12:].split(":"); prolongations.append((int(c[0]), float(c[1]), float(c[2]) if len(c) > 2 else 8.0, float(c[3]) if len(c) > 3 else -6.0))
-    calage = None
     if remplacements or prolongations:
         cj = STUDIO / prise / f"{prise}-calage.json"
         if not cj.exists(): sys.exit(f"pas de {cj} : python3 outils/caler.py {prise} d'abord")
@@ -510,7 +518,9 @@ def main():
             # pas le plateau du morceau : le fader et l'EQ ne sont pas les memes a 12 min qu'a 14
             avant = niveau_voie(d, t0 - 6, t0 - 0.5) - niveau_original(inf, t0 - 6, t0 - 0.5)
             apres = niveau_voie(d, t1 + 0.5, t1 + 6) - niveau_original(inf, t1 + 0.5, t1 + 6)
-            g_db = float((avant + apres) / 2 + d.gain_db)
+            # un cote muet (la voie s'arrete la, ou le remplacement touche le bord du disque) ne vote pas
+            cotes = [v for v, nv in ((avant, niveau_voie(d, t0 - 6, t0 - 0.5)), (apres, niveau_voie(d, t1 + 0.5, t1 + 6))) if nv > -45]
+            g_db = float((sum(cotes) / len(cotes) if cotes else d.plateau - niveau_original(inf, t0, t1)) + d.gain_db)
         else: g_db = gain
         print(f" original de {inf['original'][:40]} pose sur le disque {k} de {t0:.0f} a {t1:.0f} s ({g_db:+.1f} dB)")
         chaine_original(k, inf, t0 - FONDU_BORD, t1 + FONDU_BORD, int(FONDU_BORD * 1000), int(FONDU_BORD * 1000), g_db, f"o{n}", eq=couleur(inf, d, t0))
@@ -531,6 +541,61 @@ def main():
     cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(wav)] + entrees_sup + ["-filter_complex", ";".join(chaines), "-map", "[out]",
            "-c:a", "pcm_f32le", "-ar", "48000", str(sortie)]
     subprocess.run(cmd, check=True)
+    # LES INSERTIONS, sur le fichier rendu : a l'instant t, n temps de l'original du disque, puis la
+    # prise reprend a t (le morceau rejoue donc ce passage : une boucle de DJ). Le bord d'entree est
+    # ancre sur la voie ; les deux joints ont 20 ms de fondu, sur le temps.
+    inserees = []
+    for (k, t, n) in insertions:
+        inf = disque_cale(k); d = disques[k]
+        per_orig = 60.0 / inf["bpm"] if inf.get("bpm") else None
+        if per_orig is None: sys.exit(f"le disque {k} n'a pas de grille rekordbox, impossible de compter ses temps")
+        o0, q0 = ancre_locale(inf, d, t)
+        if q0 < 0.6: o0 = inf["a_prise"] + inf["vitesse"] * t; print(f"   entree non ancree (q {q0:.2f}) : la droite du disque fait foi")
+        # LA PERIODE SE MESURE SUR LE SON, PAS SUR LA FICHE. Compter 128 temps avec un BPM a 0,2 %
+        # pres fait tomber le retour un quart de temps a cote (27 septembre 2026, Getting Raided).
+        # Autocorrelation de l'enveloppe des attaques sur 40 s, sommet interpole : l'original autour
+        # de o0, et la voie autour de t. Leur rapport est la vitesse reelle du deck, la.
+        def periode(env, sr_env, devine):
+            e = env - env.mean(); n_ = min(len(e), int(40 * sr_env))
+            ac = np.correlate(e[:n_], e[:n_], mode="full")[n_ - 1:]
+            lo, hi = int(devine * sr_env * 0.97), int(devine * sr_env * 1.03)
+            k = lo + int(np.argmax(ac[lo:hi]))
+            y0, y1, y2 = ac[k - 1], ac[k], ac[k + 1]
+            dk = 0.5 * (y0 - y2) / (y0 - 2 * y1 + y2) if (y0 - 2 * y1 + y2) != 0 else 0.0
+            return (k + dk) / sr_env
+        def env_1k(y, sr):
+            kk = max(1, int(sr * 0.01)); cs = np.concatenate(([0.0], np.cumsum(np.abs(y), dtype=np.float64)))
+            e = (cs[kk:] - cs[:-kk]) / kk; par = max(1, int(round(sr / 1000))); nb = len(e) // par
+            e = e[:nb * par].reshape(nb, par).mean(axis=1); dd = np.diff(e, prepend=e[0]); dd[dd < 0] = 0; return dd
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(0.0, o0 - 20 * inf['vitesse']):.3f}", "-t", f"{40 * inf['vitesse']:.3f}", "-i", str(ORIGINAUX / inf["original"]),
+                              "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"], capture_output=True, check=True).stdout
+        per_o = periode(env_1k(np.frombuffer(raw, dtype=np.float32), SR), 1000.0, per_orig)
+        xv = sons[d.voie][int((t - 40 - debut) * SR):int((t - debut) * SR)]
+        per_v = periode(env_1k(xv, SR), 1000.0, per_orig / inf["vitesse"])
+        vitesse_reelle = per_o / per_v
+        print(f"   periode de l'original {per_o * 1000:.2f} ms (fiche {per_orig * 1000:.2f}), de la voie {per_v * 1000:.2f} ms → vitesse reelle {(vitesse_reelle - 1) * 100:+.3f} % (droite {(inf['vitesse'] - 1) * 100:+.3f} %)")
+        inf = dict(inf, vitesse=vitesse_reelle)
+        o1 = o0 + n * per_o
+        duree = n * per_v                                          # en secondes de prise : n temps de TA voie
+        gain = niveau_voie(d, t - 8, t - 0.5) - niveau_original(inf, t - 8, t - 0.5) + d.gain_db
+        eq = couleur(inf, d, t)
+        orig = ORIGINAUX / inf["original"]
+        sr = int(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate", "-of", "csv=p=0", str(orig)],
+                                capture_output=True, text=True).stdout.strip() or 44100)
+        ins = str(sortie) + ".insert.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(orig), "-filter_complex",
+                        f"[0:a]atrim=start={o0:.4f}:end={o1 + 0.05:.4f},asetpts=PTS-STARTPTS,asetrate={sr * inf['vitesse'] * d.vitesse:.3f},aresample=48000,aformat=channel_layouts=stereo{eq},volume={gain:.2f}dB[out]",
+                        "-map", "[out]", "-c:a", "pcm_f32le", ins], check=True)
+        a = d.sortie_temps(t) - origine
+        tmp = str(sortie) + ".insere.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(sortie), "-i", ins, "-filter_complex",
+                        f"[0:a]atrim=end={a + 0.02:.4f},asetpts=PTS-STARTPTS[x];[1:a]atrim=end={duree + 0.02:.4f},asetpts=PTS-STARTPTS[i];"
+                        f"[0:a]atrim=start={a - 0.02:.4f},asetpts=PTS-STARTPTS[y];[x][i]acrossfade=d=0.02:c1=tri:c2=tri[xi];[xi][y]acrossfade=d=0.02:c1=tri:c2=tri[out]",
+                        "-map", "[out]", "-c:a", "pcm_f32le", tmp], check=True)
+        os.replace(tmp, str(sortie)); os.remove(ins)
+        inserees.append((t, duree))
+        print(f" insertion : {n} temps de l'original de {inf['original'][:30]} a {t:.2f} s ({duree:.1f} s, {gain:+.1f} dB), la suite recule d'autant")
+
     # LES COUPES, sur le fichier rendu : la plage disparait de la prise entiere, et ce qui suit avance.
     # Les instants sont en secondes de la prise ; dans le fichier ils valent t - origine, et chaque
     # coupe deja faite avance les suivantes.
@@ -556,7 +621,7 @@ def main():
         "disques": [{"voie": dd.voie, "debut": dd.debut, "fin": dd.fin, "plateau": dd.plateau, "gain_db": dd.gain_db,
                      "decalage_s": dd.decalage, "vitesse": dd.vitesse, "ancre": dd.ancre,
                      "mesure": dd.ecarts} for dd in disques],
-        "garder": garder, "sorties": {str(k): list(v) for k, v in sorties.items()}, "coupes": coupes}, indent=1, ensure_ascii=False))
+        "garder": garder, "sorties": {str(k): list(v) for k, v in sorties.items()}, "coupes": coupes, "insertions": inserees}, indent=1, ensure_ascii=False))
     return 0
 
 if __name__ == "__main__":
